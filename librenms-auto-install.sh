@@ -47,7 +47,9 @@ info() { log "INFO" "$*"; }
 warn() { log "WARN" "$*"; }
 die() { log "ERROR" "$*"; exit 1; }
 
-gen_pass() { tr -dc 'A-Za-z0-9!@#$%&*()-_=+' </dev/urandom | head -c 32; echo; }
+gen_pass() {
+    tr -dc 'A-Za-z0-9!@#$%&*()-_=+' </dev/urandom | head -c 32; echo
+}
 
 backup_file() {
     [[ -f "$1" ]] && cp -a "$1" "${1}.bak_${TIMESTAMP}" && info "Backed up $1"
@@ -83,133 +85,218 @@ Examples:
 EOF
 }
 
-# Parse args
-ARGS=$(getopt -o hd:u:t:p:s:nfD --long help,dir:,url:,timezone:,pollers:,save-creds:,non-interactive,force,dry-run,no-firewall,no-ssl,le-email:,db-name:,db-user: -- "$@") || { print_help; exit 2; }
+# Parse arguments
+ARGS=$(getopt -o hd:u:t:p:s:nfD --long help,dir:,url:,timezone:,pollers:,save-creds:,non-interactive,force,dry-run,no-firewall,no-ssl,le-email:,db-name:,db-user: -- "$@") || {
+    print_help
+    exit 1
+}
 eval set -- "$ARGS"
 while true; do
     case "$1" in
-        -h|--help) print_help; exit 0;;
-        -d|--dir) INSTALL_DIR="$2"; shift 2;;
-        -u|--url) BASE_URL="$2"; shift 2;;
-        -t|--timezone) TZ="$2"; shift 2;;
-        -p|--pollers) POLLERS="$2"; shift 2;;
-        -s|--save-creds) SAVE_CREDS="$2"; shift 2;;
-        -n|--non-interactive) NON_INTERACTIVE=true; shift;;
-        -f|--force) FORCE=true; shift;;
-        -D|--dry-run) DRY_RUN=true; shift;;
-        --no-firewall) SKIP_FIREWALL=true; shift;;
-        --no-ssl) SKIP_SSL=true; shift;;
-        --le-email) LE_EMAIL="$2"; shift 2;;
-        --db-name) DB_NAME="$2"; shift 2;;
-        --db-user) DB_USER="$2"; shift 2;;
-        --) shift; break;;
-        *) die "Unknown option: $1";;
+        -h|--help) print_help; exit 0 ;;
+        -d|--dir) INSTALL_DIR="$2"; shift 2 ;;
+        -u|--url) BASE_URL="$2"; shift 2 ;;
+        -t|--timezone) TZ="$2"; shift 2 ;;
+        -p|--pollers) POLLERS="$2"; shift 2 ;;
+        -s|--save-creds) SAVE_CREDS="$2"; shift 2 ;;
+        -n|--non-interactive) NON_INTERACTIVE=true; shift ;;
+        -f|--force) FORCE=true; shift ;;
+        -D|--dry-run) DRY_RUN=true; shift ;;
+        --no-firewall) SKIP_FIREWALL=true; shift ;;
+        --no-ssl) SKIP_SSL=true; shift ;;
+        --le-email) LE_EMAIL="$2"; shift 2 ;;
+        --db-name) DB_NAME="$2"; shift 2 ;;
+        --db-user) DB_USER="$2"; shift 2 ;;
+        --) shift; break ;;
     esac
 done
 
-# Validate
-[[ $EUID -ne 0 ]] && die "Run as root (sudo)"
-$NON_INTERACTIVE && [[ -z "$BASE_URL" ]] && die "Non-interactive mode requires --url"
-
-run_cmd() {
-    local cmd="$*"
-    if $DRY_RUN; then info "DRY-RUN: $cmd"; else info "Running: $cmd"; eval "$cmd"; fi
-}
-
-# Pre-flight
-if ! $FORCE; then
-    for port in 80 443 161 162; do
-        ss -tuln | grep -q ":$port " && warn "Port $port in use"
-    done
-    docker compose version >/dev/null 2>&1 || die "Docker Compose not installed"
+# Pre-flight checks
+if [[ $EUID -ne 0 ]]; then
+    die "This script must be run as root (use sudo)"
 fi
 
-# Interactive prompts
-if ! $NON_INTERACTIVE; then
-    [[ -z "$BASE_URL" ]] && read -rp "Base URL (e.g., https://librenms.example.com): " BASE_URL
-    read -rp "Timezone [$TZ]: " t; [[ -n "$t" ]] && TZ="$t"
-    read -rp "Pollers [$POLLERS]: " p; [[ -n "$p" ]] && POLLERS="$p"
+if ! command -v docker-compose &> /dev/null && ! command -v docker &> /dev/null; then
+    die "Docker Compose is not installed. Please install Docker and Docker Compose."
 fi
 
-# Generate passwords
-DB_PASSWORD=$(gen_pass)
-DB_ROOT_PASSWORD=$(gen_pass)
-ADMIN_USER="admin"
-ADMIN_PASS=$(gen_pass)
-ADMIN_EMAIL="${LE_EMAIL:-admin@${BASE_URL#*://}}"
+# Determine docker-compose command
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    DOCKER_COMPOSE="docker compose"
+fi
 
-info "Installing to $INSTALL_DIR"
-run_cmd "mkdir -p $INSTALL_DIR/{data/{librenms,db,redis},logs/librenms,config/librenms,rrd}"
-run_cmd "cd $INSTALL_DIR"
+# Validate required options
+if [[ "$NON_INTERACTIVE" == true && -z "$BASE_URL" ]]; then
+    die "Non-interactive mode requires --url"
+fi
 
-# Create .env
-cat > "$INSTALL_DIR/.env" <<EOF
-TZ=$TZ
-PUID=$PUID
-PGID=$PGID
-DB_NAME=$DB_NAME
-DB_USER=$DB_USER
-DB_PASSWORD=$DB_PASSWORD
-DB_ROOT_PASSWORD=$DB_ROOT_PASSWORD
-BASE_URL=$BASE_URL
-POLLERS=$POLLERS
-ENABLE_SYSLOG=$ENABLE_SYSLOG
-ENABLE_SNMPTRAP=$ENABLE_SNMPTRAP
+# Generate passwords if not set
+if [[ -z "$DB_PASSWORD" ]]; then
+    DB_PASSWORD=$(gen_pass)
+fi
+if [[ -z "$DB_ROOT_PASSWORD" ]]; then
+    DB_ROOT_PASSWORD=$(gen_pass)
+fi
+# Generate admin credentials for LibreNMS
+if [[ -z "$ADMIN_PASS" ]]; then
+    ADMIN_PASS=$(gen_pass)
+fi
+if [[ -z "$ADMIN_EMAIL" ]]; then
+    # Try to extract hostname from BASE_URL, default to localhost
+    if [[ -n "$BASE_URL" ]]; then
+        # Remove protocol and port
+        ADMIN_EMAIL="admin@$(echo "$BASE_URL" | sed -e 's|^[^/]*//||' -e 's/:.*//')"
+    else
+        ADMIN_EMAIL="admin@localhost"
+    fi
+fi
+
+# Export variables for docker-compose
+export TZ PUID PGID BASE_URL DB_NAME DB_USER DB_PASSWORD DB_ROOT_PASSWORD MEMCACHED_HOST REDIS_HOST POLLERS ENABLE_SYSLOG ENABLE_SNMPTRAP ADMIN_PASS ADMIN_EMAIL
+
+# Create install directory
+mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR" || die "Cannot access $INSTALL_DIR"
+
+# Copy docker-compose.yml from script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ! -f docker-compose.yml ]]; then
+    if [[ "$DRY_RUN" == false ]]; then
+        cp "$SCRIPT_DIR/docker-compose.yml" .
+        info "Copied docker-compose.yml to $INSTALL_DIR"
+    else
+        info "[DRY-RUN] Would copy docker-compose.yml to $INSTALL_DIR"
+    fi
+fi
+
+# Backup existing .env if present
+if [[ -f .env && "$FORCE" == false ]]; then
+    backup_file .env
+fi
+
+# Create .env file from template or defaults
+if [[ "$DRY_RUN" == false ]]; then
+    cat > .env <<EOF
+# LibreNMS Docker Compose Environment
+# Generated by librenms-auto-install.sh on $(date)
+
+TZ=${TZ}
+PUID=${PUID}
+PGID=${PGID}
+BASE_URL=${BASE_URL}
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
+DB_PASSWORD=${DB_PASSWORD}
+DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+MEMCACHED_HOST=${MEMCACHED_HOST}
+REDIS_HOST=${REDIS_HOST}
+POLLERS=${POLLERS}
+ENABLE_SYSLOG=${ENABLE_SYSLOG}
+ENABLE_SNMPTRAP=${ENABLE_SNMPTRAP}
 EOF
-run_cmd "chmod 600 $INSTALL_DIR/.env"
+    chmod 600 .env
+    info "Created .env file"
+else
+    info "[DRY-RUN] Would create .env file"
+fi
 
-# Copy docker-compose.yml
-cp "$(dirname "$0")/docker-compose.yml" "$INSTALL_DIR/"
+# Save credentials if requested
+if [[ -n "$SAVE_CREDS" ]]; then
+    if [[ "$DRY_RUN" == false ]]; then
+        {
+            echo "# LibreNMS credentials generated on $(date)"
+            echo "MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}"
+            echo "MYSQL_DATABASE=${DB_NAME}"
+            echo "MYSQL_USER=${DB_USER}"
+            echo "MYSQL_PASSWORD=${DB_PASSWORD}"
+            echo "BASE_URL=${BASE_URL}"
+            echo "TZ=${TZ}"
+        } > "$SAVE_CREDS"
+        chmod 600 "$SAVE_CREDS"
+        info "Credentials saved to $SAVE_CREDS (chmod 600)"
+    else
+        info "[DRY-RUN] Would save credentials to $SAVE_CREDS"
+    fi
+fi
+
+# Firewall configuration
+if [[ "$SKIP_FIREWALL" == false && "$DRY_RUN" == false ]]; then
+    if command -v ufw &> /dev/null; then
+        info "Configuring UFW firewall..."
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        ufw allow 161/udp
+        ufw allow 162/udp
+        ufw allow 514/udp   # syslog
+        info "UFW rules updated"
+    else
+        warn "UFW not installed, skipping firewall configuration"
+    fi
+elif [[ "$SKIP_FIREWALL" == true ]]; then
+    info "Skipping firewall configuration as requested"
+fi
+
+# SSL configuration placeholder (for future Let's Encrypt integration)
+if [[ "$SKIP_SSL" == false && -n "$LE_EMAIL" ]]; then
+    info "Let's Encrypt email provided: $LE_EMAIL. You can obtain certificates manually using certbot or similar."
+elif [[ "$SKIP_SSL" == true ]]; then
+    info "SSL configuration skipped SSL configuration as requested"
+fi
 
 # Start services
-run_cmd "cd $INSTALL_DIR && docker compose up -d"
-
-# Wait for DB
-info "Waiting for database..."
-for i in {1..30}; do
-    if run_cmd "cd $INSTALL_DIR && docker compose exec -T db mysqladmin ping -h localhost -u root -p\$DB_ROOT_PASSWORD --silent" 2>/dev/null; then break; fi
-    sleep 2
-done
-
-# Initialize LibreNMS (create admin user)
-info "Creating admin user..."
-run_cmd "cd $INSTALL_DIR && docker compose exec -T librenms php artisan librenms:user:add --name=\"$ADMIN_USER\" --password=\"$ADMIN_PASS\" --email=\"$ADMIN_EMAIL\" --role=admin 2>/dev/null || true"
-
-# Firewall
-if ! $SKIP_FIREWALL && command -v ufw >/dev/null 2>&1; then
-    run_cmd "ufw allow 80/tcp comment 'LibreNMS HTTP'"
-    run_cmd "ufw allow 443/tcp comment 'LibreNMS HTTPS'"
-    run_cmd "ufw allow 161/udp comment 'LibreNMS SNMP'"
-    run_cmd "ufw allow 162/udp comment 'LibreNMS SNMP Trap'"
-    info "UFW rules added (run 'ufw enable' to activate)"
+if [[ "$DRY_RUN" == false ]]; then
+    info "Starting Docker Compose services..."
+    $DOCKER_COMPOSE up -d
+else
+    info "[DRY-RUN] Would run: $DOCKER_COMPOSE up -d"
 fi
 
-# Save credentials
-if [[ -n "$SAVE_CREDS" ]]; then
-    cat > "$SAVE_CREDS" <<EOF
-# LibreNMS Credentials - $(date)
-LibreNMS URL: $BASE_URL
-Admin User: $ADMIN_USER
-Admin Pass: $ADMIN_PASS
-
-Database: $DB_NAME
-DB User: $DB_USER
-DB Pass: $DB_PASSWORD
-DB Root: $DB_ROOT_PASSWORD
-EOF
-    chmod 600 "$SAVE_CREDS"
-    info "Credentials saved to $SAVE_CREDS"
+# Wait for database to be healthy
+if [[ "$DRY_RUN" == false ]]; then
+    info "Waiting for database to be ready..."
+    for i in {1..30}; do
+        if $DOCKER_COMPOSE exec db mysqladmin ping -h"localhost" -u"root" -p"${DB_ROOT_PASSWORD}" &> /dev/null; then
+            info "Database is ready"
+            break
+        fi
+        sleep 2
+        if [[ $i -eq 30 ]]; then
+            warn "Database did not become ready in time; continuing anyway"
+        fi
+    done
+else
+    info "[DRY-RUN] Would wait for database to be ready"
 fi
 
-# Summary
-cat <<EOF
+# Initialize LibreNMS (first-time setup)
+if [[ "$DRY_RUN" == false ]]; then
+    info "Initializing LibreNMS database..."
+    # Wait a bit more for services to be ready
+    sleep 5
+    # Run initial database migration and setup
+    $DOCKER_COMPOSE exec librenms php /opt/librenms/artisan migrate --force || true
+    $DOCKER_COMPOSE exec librenms php /opt/librenms/artisan librenms:seed || true
+    # Create initial admin user if not exists
+    $DOCKER_COMPOSE exec librenms php /opt/librenms/artisan librenms:user:add --name="admin" --pass="$ADMIN_PASS" --email="$ADMIN_EMAIL" --role=10 || true
+else
+    info "[DRY-RUN] Would initialize LibreNMS"
+fi
 
-===================================================================
-LibreNMS Installation Complete!
-URL: $BASE_URL
-Admin: $ADMIN_USER / $ADMIN_PASS
-Database: $DB_NAME / $DB_USER / $DB_PASSWORD
-===================================================================
-EOF
-
-exit 0
+# Final summary
+if [[ "$DRY_RUN" == false ]]; then
+    info "Installation complete!"
+    info "LibreNMS is accessible at: ${BASE_URL:-http://$(hostname -I | awk '{print $1}')}"
+    info "Default admin credentials:"
+    info "  Username: admin"
+    info "  Password: $ADMIN_PASS"
+    info "  Email: $ADMIN_EMAIL"
+    info "Database credentials saved in .env (chmod 600)"
+    if [[ -n "$SAVE_CREDS" ]]; then
+        info "Credentials also saved to: $SAVE_CREDS"
+    fi
+    info "Log file: $LOG_FILE"
+else
+    info "[DRY-RUN] Dry run completed"
+fi

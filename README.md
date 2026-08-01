@@ -123,7 +123,7 @@ After installation:
 |------|-------|
 | **Web UI** | `https://your-domain` (or `http://IP` if `--no-ssl`) |
 | **Admin User** | `admin` |
-| **Admin Password** | Generated (shown once, saved to `--save-creds` file) |
+| **Admin Password** | Generated 32-char string (shown once, saved to `--save-creds` file) |
 | **SNMP Community** | Configure in UI → Devices → Add Device |
 
 ### Enable SNMP on Network Devices
