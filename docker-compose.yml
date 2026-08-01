@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  librenms:
+    image: librenms/librenms:latest
+    container_name: librenms
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-librenms}
+      - DB_USER=${DB_USER:-librenms}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=3306
+      - MEMCACHED_HOST=memcached
+      - REDIS_HOST=redis
+      - BASE_URL=${BASE_URL:-http://localhost}
+      - POLLERS=${POLLERS:-16}
+      - ENABLE_SYSLOG=${ENABLE_SYSLOG:-true}
+      - ENABLE_SNMPTRAP=${ENABLE_SNMPTRAP:-true}
+    volumes:
+      - ./data/librenms:/data
+      - ./logs/librenms:/opt/librenms/logs
+      - ./config/librenms:/opt/librenms/config.d
+      - ./rrd:/opt/librenms/rrd
+    ports:
+      - "80:8000"
+      - "443:8443"
+      - "162:162/udp"
+      - "161:161/udp"
+    depends_on:
+      db:
+        condition: service_healthy
+      memcached:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - librenms-net
+
+  db:
+    image: mariadb:10.11
+    container_name: librenms-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${DB_NAME:-librenms}
+      - MYSQL_USER=${DB_USER:-librenms}
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ./data/db:/var/lib/mysql
+    command:
+      - --innodb-file-per-table=1
+      - --lower-case-table-names=0
+      - --max_allowed_packet=64M
+      - --innodb_buffer_pool_size=1G
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - librenms-net
+
+  memcached:
+    image: memcached:1.6-alpine
+    container_name: librenms-memcached
+    restart: unless-stopped
+    command: -m 64
+    networks:
+      - librenms-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: librenms-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - ./data/redis:/data
+    networks:
+      - librenms-net
+
+networks:
+  librenms-net:
+    driver: bridge
