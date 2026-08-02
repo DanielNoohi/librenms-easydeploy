@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # Main LibreNMS application
   librenms:
     image: librenms/librenms:24.10.0
     container_name: librenms
@@ -34,9 +35,9 @@ services:
       db:
         condition: service_healthy
       memcached:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     networks:
       - librenms-net
     healthcheck:
@@ -46,6 +47,110 @@ services:
       retries: 3
       start_period: 60s
 
+  # Dispatcher for distributed polling
+  dispatcher:
+    image: librenms/librenms:24.10.0
+    container_name: librenms-dispatcher
+    restart: unless-stopped
+    command: dispatcher
+    environment:
+      - TZ=${TZ:-UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-librenms}
+      - DB_USER=${DB_USER:-librenms}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=3306
+      - MEMCACHED_HOST=memcached
+      - REDIS_HOST=redis
+      - BASE_URL=${BASE_URL:-http://localhost}
+    volumes:
+      - ./data/librenms:/data
+      - ./logs/librenms:/opt/librenms/logs
+      - ./config/librenms:/opt/librenms/config.d
+      - ./rrd:/opt/librenms/rrd
+    depends_on:
+      db:
+        condition: service_healthy
+      memcached:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - librenms-net
+    healthcheck:
+      test: ["CMD", "php", "/opt/librenms/artisan", "librenms:dispatcher:health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Syslog server for network device logs
+  syslog:
+    image: librenms/librenms:24.10.0
+    container_name: librenms-syslog
+    restart: unless-stopped
+    command: syslog
+    environment:
+      - TZ=${TZ:-UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-librenms}
+      - DB_USER=${DB_USER:-librenms}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=3306
+      - MEMCACHED_HOST=memcached
+      - REDIS_HOST=redis
+      - BASE_URL=${BASE_URL:-http://localhost}
+    volumes:
+      - ./data/librenms:/data
+      - ./logs/librenms:/opt/librenms/logs
+      - ./config/librenms:/opt/librenms/config.d
+    ports:
+      - "514:514/udp"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - librenms-net
+
+  # SNMP trap receiver
+  snmptrap:
+    image: librenms/librenms:24.10.0
+    container_name: librenms-snmptrap
+    restart: unless-stopped
+    command: snmptrap
+    environment:
+      - TZ=${TZ:-UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-librenms}
+      - DB_USER=${DB_USER:-librenms}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=3306
+      - MEMCACHED_HOST=memcached
+      - REDIS_HOST=redis
+      - BASE_URL=${BASE_URL:-http://localhost}
+    volumes:
+      - ./data/librenms:/data
+      - ./logs/librenms:/opt/librenms/logs
+      - ./config/librenms:/opt/librenms/config.d
+    ports:
+      - "162:162/udp"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - librenms-net
+
+  # MariaDB database
   db:
     image: mariadb:10.11
     container_name: librenms-db
@@ -71,6 +176,7 @@ services:
     networks:
       - librenms-net
 
+  # Memcached for caching
   memcached:
     image: memcached:1.6-alpine
     container_name: librenms-memcached
@@ -84,6 +190,7 @@ services:
       timeout: 5s
       retries: 3
 
+  # Redis for cache/queue
   redis:
     image: redis:7-alpine
     container_name: librenms-redis
@@ -98,6 +205,35 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Optional: Traefik reverse proxy with Let's Encrypt (comment out if not needed)
+  # traefik:
+  #   image: traefik:v3.0
+  #   container_name: librenms-traefik
+  #   restart: unless-stopped
+  #   command:
+  #     - --api.dashboard=true
+  #     - --providers.docker=true
+  #     - --providers.docker.exposedbydefault=false
+  #     - --entrypoints.web.address=:80
+  #     - --entrypoints.websecure.address=:443
+  #     - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+  #     - --certificatesresolvers.letsencrypt.acme.email=${LE_EMAIL}
+  #     - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #     - ./letsencrypt:/letsencrypt
+  #   networks:
+  #     - librenms-net
+  #   labels:
+  #     - traefik.enable=true
+  #     - traefik.http.routers.librenms.rule=Host(`${BASE_URL#*://}`)
+  #     - traefik.http.routers.librenms.entrypoints=websecure
+  #     - traefik.http.routers.librenms.tls.certresolver=letsencrypt
+  #     - traefik.http.services.librenms.loadbalancer.server.port=8000
 
 networks:
   librenms-net:

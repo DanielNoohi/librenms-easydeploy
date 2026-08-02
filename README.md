@@ -13,7 +13,7 @@
 | **Traffic Analysis (NetFlow/sFlow/IPFIX)** | ✅ Native | Via plugins | ❌ |
 | **SNMP Monitoring** | ✅ First-class (MIB auto-load) | ✅ Good | Basic |
 | **Config Management** | ✅ Oxidized integration | ❌ | ✅ |
-| **Alerting** | ✅ Flexible (transport: email, Slack, PagerDuty, etc.) | ✅ Excellent | Basic |
+| **Alerting** | ✅ Flexible (email, Slack, PagerDuty, etc.) | ✅ Excellent | Basic |
 | **Asset/Inventory** | ✅ Network device focus | Server/app focus | ✅ Endpoint focus |
 
 **Perfect complement** to your stack:
@@ -53,7 +53,7 @@ sudo ./librenms-auto-install.sh \
   --save-creds ~/librenms-creds.txt
 ```
 
-### With Let's Encrypt email (for certbot later)
+### With Let's Encrypt email (for future certbot integration)
 ```bash
 sudo ./librenms-auto-install.sh \
   -n -u https://librenms.example.com \
@@ -81,7 +81,7 @@ sudo ./librenms-auto-install.sh --dry-run -n -u https://librenms.example.com
 | `-d` | `--dir` | Install directory (default: `/opt/librenms-easydeploy`) |
 | `-u` | `--url` | Base URL (required for non-interactive) |
 | `-t` | `--timezone` | Timezone (default: `UTC`) |
-| `-p` | `--pollers` | Poller processes (default: `16`) |
+| `-p` | `--pollers` | Poller processes (default: `16`, range: 1-64) |
 | `-s` | `--save-creds` | Save credentials to file (`chmod 600`) |
 | `-n` | `--non-interactive` | No prompts (requires `--url`) |
 | `-f` | `--force` | Skip pre-flight checks |
@@ -99,9 +99,12 @@ sudo ./librenms-auto-install.sh --dry-run -n -u https://librenms.example.com
 - **Strong 32-char passwords** for DB root, DB user, and admin user
 - **Credentials never on command line** - passed via Docker Compose `.env` (chmod 600)
 - **Non-root containers** - runs as PUID/PGID 1000
-- **UFW firewall rules** for ports 80, 443, 161/udp, 162/udp
+- **UFW firewall rules** for ports 80, 443, 161/udp, 162/udp, 514/udp
 - **No interference** with existing Zabbix (ports 10050/10051) or Lansweeper
 - **Data persistence** - all data in `./data/` survives container updates
+- **Volume permissions** automatically set to PUID:PGID
+- **Pinned Docker images** - no `:latest` tags
+- **Health checks** on all services
 
 ---
 
@@ -111,7 +114,7 @@ sudo ./librenms-auto-install.sh --dry-run -n -u https://librenms.example.com
 - Docker Engine + Docker Compose v2 (`docker compose`)
 - Root/sudo access
 - 4 GB RAM minimum (8 GB recommended for >500 devices)
-- Ports 80, 443, 161/udp, 162/udp available
+- Ports 80, 443, 161/udp, 162/udp, 514/udp available
 
 ---
 
@@ -152,8 +155,21 @@ LibreNMS automatically discovers via:
 │  librenms   │    db    │  memcached │         redis         │
 │  (app)      │ (MariaDB)│  (cache)   │     (cache/queue)     │
 │  Port 8000  │  Port 3306│  Port 11211│      Port 6379        │
+├─────────────┼──────────┼────────────┼───────────────────────┤
+│ dispatcher  │  syslog  │  snmptrap  │   traefik (optional)  │
+│ (polling)   │  (UDP 514)│  (UDP 162) │    (HTTPS/Let's Enc)  │
 └─────────────┴──────────┴────────────┴───────────────────────┘
 ```
+
+**Services:**
+- **librenms** - Main web UI, polling, alerting
+- **dispatcher** - Distributed polling for large deployments
+- **syslog** - Network device syslog ingestion (UDP 514)
+- **snmptrap** - SNMP trap receiver (UDP 162)
+- **db** - MariaDB 10.11 database
+- **memcached** - Caching layer
+- **redis** - Queue/cache backend
+- **traefik** - Optional reverse proxy with Let's Encrypt (commented out)
 
 **Volumes** (persisted in `$INSTALL_DIR`):
 - `./data/librenms` - LibreNMS data, configs, RRD files
@@ -197,13 +213,13 @@ rm -rf /opt/librenms-easydeploy
 
 ```
 librenms-easydeploy/
-├── docker-compose.yml          # Service definitions
-├── librenms-auto-install.sh    # Main installer
+├── docker-compose.yml          # Service definitions (pinned images, healthchecks)
+├── librenms-auto-install.sh    # Main installer (validated, secure)
 ├── .env.example                # Template for .env
 ├── test/
 │   └── test_args.bats          # Bats argument tests
 ├── .github/
-│   └── workflows/ci.yml        # GitHub Actions CI
+│   └── workflows/ci.yml        # GitHub Actions CI (ShellCheck, shfmt, Bats, Compose)
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -214,7 +230,7 @@ librenms-easydeploy/
 ## 🧪 Testing
 
 ```bash
-# Install test deps
+# Install test deps (Ubuntu/Debian)
 sudo apt-get install -y bats shellcheck shfmt
 
 # Run tests
@@ -222,6 +238,13 @@ bats test/
 shellcheck librenms-auto-install.sh
 shfmt -d librenms-auto-install.sh
 ```
+
+CI runs automatically on push/PR:
+- **ShellCheck** - Static analysis for shell scripts
+- **shfmt** - Formatting validation
+- **Bats** - Unit tests for argument parsing
+- **Docker Compose** - Config validation, no `:latest` tags
+- **Security** - Secret scanning
 
 ---
 
