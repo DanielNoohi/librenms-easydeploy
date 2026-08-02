@@ -37,7 +37,12 @@ TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 log() {
   local level="$1"
   shift
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*" | tee -a "$LOG_FILE"
+  local msg="[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*"
+  echo "$msg"
+  # Write to log file only if writable (never fail the script over logging)
+  if { [[ -w "$LOG_FILE" ]] || [[ -w "$(dirname "$LOG_FILE")" ]]; }; then
+    echo "$msg" >> "$LOG_FILE"
+  fi
 }
 info() { log "INFO" "$*"; }
 warn() { log "WARN" "$*"; }
@@ -168,22 +173,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Pre-flight checks
-[[ $EUID -ne 0 ]] && die "This script must be run as root (use sudo)"
-
-if ! command -v docker &>/dev/null; then
-  die "Docker is not installed. Please install Docker first."
-fi
-
-# Determine docker-compose command
-if docker compose version &>/dev/null; then
-  DOCKER_COMPOSE="docker compose"
-elif command -v docker-compose &>/dev/null; then
-  DOCKER_COMPOSE="docker-compose"
-else
-  die "Docker Compose is not installed. Please install Docker Compose v2."
-fi
-
 # Validate required options
 [[ "$NON_INTERACTIVE" == true && -z "$BASE_URL" ]] && die "Non-interactive mode requires --url"
 [[ -n "$BASE_URL" ]] && validate_url "$BASE_URL"
@@ -223,7 +212,7 @@ ADMIN_EMAIL="${ADMIN_EMAIL%%:*}" # Remove port if any
 # Export variables for docker-compose
 export TZ PUID PGID BASE_URL DB_NAME DB_USER DB_PASSWORD DB_ROOT_PASSWORD MEMCACHED_HOST REDIS_HOST POLLERS ENABLE_SYSLOG ENABLE_SNMPTRAP
 
-# Dry-run: show configuration and exit
+# Dry-run: show configuration and exit (must run before root/docker checks)
 if [[ "$DRY_RUN" == true ]]; then
   info "=== DRY-RUN MODE (no changes will be made) ==="
   info "Install directory: $INSTALL_DIR"
@@ -241,11 +230,27 @@ if [[ "$DRY_RUN" == true ]]; then
   info "Would create: $INSTALL_DIR/{data,logs,config,rrd}"
   info "Would copy: docker-compose.yml"
   info "Would create: .env (chmod 600)"
-  info "Would start: $DOCKER_COMPOSE up -d"
+  info "Would start: ${DOCKER_COMPOSE:-docker compose} up -d"
   info "Would wait for database health"
   info "Would run migrations and create admin user"
   info "=== DRY-RUN COMPLETE ==="
   exit 0
+fi
+
+# Pre-flight checks (done AFTER arg validation so --help/--dry-run work without root)
+[[ $EUID -ne 0 ]] && die "This script must be run as root (use sudo)"
+
+if ! command -v docker &>/dev/null; then
+  die "Docker is not installed. Please install Docker first."
+fi
+
+# Determine docker-compose command
+if docker compose version &>/dev/null; then
+  DOCKER_COMPOSE="docker compose"
+elif command -v docker-compose &>/dev/null; then
+  DOCKER_COMPOSE="docker-compose"
+else
+  die "Docker Compose is not installed. Please install Docker Compose v2."
 fi
 
 # Create install directory

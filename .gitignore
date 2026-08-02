@@ -16,6 +16,9 @@ rrd/
 # Docker Compose overrides
 docker-compose.override.yml
 
+# Bats test helpers (cloned by CI, not committed)
+test/test_helper/
+
 # OS generated files
 .DS_Store
 Thumbs.db
