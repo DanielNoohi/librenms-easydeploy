@@ -1,7 +1,7 @@
 services:
-  # Main LibreNMS application - web UI, poller, alerting
+  # LibreNMS with built-in sidecar services (dispatcher, syslog, SNMP trap)
   librenms:
-    image: librenms/librenms:24.10.0
+    image: librenms/librenms:25.4.1
     container_name: librenms
     restart: unless-stopped
     environment:
@@ -17,8 +17,10 @@ services:
       - REDIS_HOST=redis
       - BASE_URL=${BASE_URL:-http://localhost}
       - POLLERS=${POLLERS:-16}
-      - ENABLE_SYSLOG=${ENABLE_SYSLOG:-true}
-      - ENABLE_SNMPTRAP=${ENABLE_SNMPTRAP:-true}
+      # Official LibreNMS sidecar service flags
+      - SIDECAR_DISPATCHER=true
+      - SIDECAR_SYSLOGNG=true
+      - SIDECAR_SNMPTRAPD=true
     volumes:
       - ./data/librenms:/data
       - ./logs/librenms:/opt/librenms/logs
@@ -26,6 +28,8 @@ services:
       - ./rrd:/opt/librenms/rrd
     ports:
       - "80:8000"
+      - "514:514/udp"
+      - "162:162/udp"
     depends_on:
       db:
         condition: service_healthy
@@ -41,109 +45,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-
-  # Dispatcher - distributed polling (required)
-  dispatcher:
-    image: librenms/librenms:24.10.0
-    container_name: librenms-dispatcher
-    restart: unless-stopped
-    command: dispatcher
-    depends_on:
-      db:
-        condition: service_healthy
-      memcached:
-        condition: service_started
-      redis:
-        condition: service_started
-    environment:
-      - TZ=${TZ:-UTC}
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - DB_HOST=db
-      - DB_NAME=${DB_NAME:-librenms}
-      - DB_USER=${DB_USER:-librenms}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_PORT=3306
-      - MEMCACHED_HOST=memcached
-      - REDIS_HOST=redis
-      - BASE_URL=${BASE_URL:-http://localhost}
-    volumes:
-      - ./data/librenms:/data
-      - ./logs/librenms:/opt/librenms/logs
-      - ./config/librenms:/opt/librenms/config.d
-      - ./rrd:/opt/librenms/rrd
-    networks:
-      - librenms-net
-    healthcheck:
-      test: ["CMD", "php", "/opt/librenms/artisan", "librenms:dispatcher:health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # Syslog - network device syslog ingestion (UDP 514)
-  syslogd:
-    image: librenms/librenms:24.10.0
-    container_name: librenms-syslog
-    restart: unless-stopped
-    command: syslogd
-    environment:
-      - TZ=${TZ:-UTC}
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - DB_HOST=db
-      - DB_NAME=${DB_NAME:-librenms}
-      - DB_USER=${DB_USER:-librenms}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_PORT=3306
-      - MEMCACHED_HOST=memcached
-      - REDIS_HOST=redis
-      - BASE_URL=${BASE_URL:-http://localhost}
-    volumes:
-      - ./data/librenms:/data
-      - ./logs/librenms:/opt/librenms/logs
-      - ./config/librenms:/opt/librenms/config.d
-    ports:
-      - "514:514/udp"
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    networks:
-      - librenms-net
-
-  # SNMP trap receiver (UDP 162)
-  snmptrapd:
-    image: librenms/librenms:24.10.0
-    container_name: librenms-snmptrap
-    restart: unless-stopped
-    command: snmptrapd
-    environment:
-      - TZ=${TZ:-UTC}
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - DB_HOST=db
-      - DB_NAME=${DB_NAME:-librenms}
-      - DB_USER=${DB_USER:-librenms}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_PORT=3306
-      - MEMCACHED_HOST=memcached
-      - REDIS_HOST=redis
-      - BASE_URL=${BASE_URL:-http://localhost}
-    volumes:
-      - ./data/librenms:/data
-      - ./logs/librenms:/opt/librenms/logs
-      - ./config/librenms:/opt/librenms/config.d
-    ports:
-      - "162:162/udp"
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    networks:
-      - librenms-net
 
   # MariaDB 10.11
   db:

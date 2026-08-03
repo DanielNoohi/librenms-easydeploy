@@ -18,8 +18,6 @@ DB_ROOT_PASSWORD=""
 MEMCACHED_HOST="memcached"
 REDIS_HOST="redis"
 POLLERS=16
-ENABLE_SYSLOG=true
-ENABLE_SNMPTRAP=true
 NON_INTERACTIVE=false
 FORCE=false
 DRY_RUN=false
@@ -52,24 +50,38 @@ die() {
   exit 1
 }
 
-#-------------------------- Password generation (pipefail-safe) ---------
+#-------------------------- Password generation (python3 only, length verified) --
 gen_pass() {
   local len="${1:-32}" pass=""
-  if command -v python3 &>/dev/null; then
-    pass=$(python3 -c "
+  command -v python3 &>/dev/null || die "python3 is required for password generation"
+  pass=$(python3 -c "
 import secrets, string
 alphabet = string.ascii_letters + string.digits
 print(''.join(secrets.choice(alphabet) for _ in range($len)))
-" 2>/dev/null || true)
-  fi
-  if [[ -z "$pass" ]] && command -v openssl &>/dev/null; then
-    pass=$(openssl rand -base64 48 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c "$len" || true)
-  fi
-  if [[ -z "$pass" ]]; then
-    pass=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | dd bs=1 count="$len" 2>/dev/null || true)
-  fi
-  [[ -n "$pass" ]] || die "Failed to generate secure password"
+" 2>/dev/null) || die "Failed to generate secure password"
+  [[ ${#pass} -eq "$len" ]] || die "Generated password length ${#pass} != expected $len"
   echo "$pass"
+}
+
+#-------------------------- Embedded docker-compose.yml (for curl|bash mode) --
+EMBEDDED_COMPOSE_B64="c2VydmljZXM6CiAgIyBMaWJyZU5NUyB3aXRoIGJ1aWx0LWluIHNpZGVjYXIgc2VydmljZXMgKGRpc3BhdGNoZXIsIHN5c2xvZywgU05NUCB0cmFwKQogIGxpYnJlbm1zOgogICAgaW1hZ2U6IGxpYnJlbm1zL2xpYnJlbm1zOjI1LjQuMQogICAgY29udGFpbmVyX25hbWU6IGxpYnJlbm1zCiAgICByZXN0YXJ0OiB1bmxlc3Mtc3RvcHBlZAogICAgZW52aXJvbm1lbnQ6CiAgICAgIC0gVFo9JHtUWjotVVRDfQogICAgICAtIFBVSUQ9e1BVSUQ6LTEwMDB9CiAgICAgIC0gUEdJRD17UEdJRDotMTAwMH0KICAgICAgLSBEQl9IT1NUPWRiCiAgICAgIC0gREJfTkFNRT0ke0RCX05BTUU6LWxpYnJlbm1zfQogICAgICAtIERCX1VTRVI9e0RCX1VTRVI6LWxpYnJlbm1zfQogICAgICAtIERCX1BBU1NXT1JEPXskREJfUEFTU1dPUkR9CiAgICAgIC0gREJfUE9SVD0zMzA2CiAgICAgIC0gTUVNQ0FDSEVEX0hPU1Q9bWVtY2FjaGVkCiAgICAgIC0gUkVESVNfSE9TVD1yZWRpcwogICAgICAtIEJBU0VfVVJMPSR7QkFTRV9VUkw6LWh0dHA6Ly9sb2NhbGhvc3R9CiAgICAgIC0gUE9MTEVSUz0ke1BPTExFUlM6LTE2fQogICAgICAjIE9mZmljaWFsIExpYnJlTk1TIHNpZGVjYXIgc2VydmljZSBmbGFncwogICAgICAtIFNJREVDQVJfRElTUEFUQ0hFUj10cnVlCiAgICAgIC0gU0lERUNBUl9TWVNMT0dORz10cnVlCiAgICAgIC0gU0lERUNBUl9TTk1QVFJBUFREPXRydWUKICAgIHZvbHVtZXM6CiAgICAgIC0gLi9kYXRhL2xpYnJlbm1zOi9kYXRhCiAgICAgIC0gLi9sb2dzL2xpYnJlbm1zOi9vcHQvbGlicmVubXMvbG9ncwogICAgICAtIC4vY29uZmlnL2xpYnJlbm1zOi9vcHQvbGlicmVubXMvY29uZmlnLmQKICAgICAgLSAuL3JyZDovb3B0L2xpYnJlbm1zL3JyZAogICAgcG9ydHM6CiAgICAgIC0gIjgwOjgwMDAiCiAgICAgIC0gIjUxNDo1MTQvdWRwIgogICAgICAtICIxNjI6MTYyL3VkcCIKICAgIGRlcGVuZHNfb246CiAgICAgIGRiOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5CiAgICAgIG1lbWNhY2hlZDoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgICByZWRpczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgbmV0d29ya3M6CiAgICAgIC0gbGlicmVubXMtbmV0CiAgICBoZWFsdGhjaGVjazoKICAgICAgdGVzdDogWyJDTUQiLCAiY3VybCIsICItZiIsICJodHRwOi8vbG9jYWxob3N0OjgwMDAiXQogICAgICBpbnRlcnZhbDogMzBzCiAgICAgIHRpbWVvdXQ6IDEwcwogICAgICByZXRyaWVzOiAzCiAgICAgIHN0YXJ0X3BlcmlvZDogNjBzCgogICMgTWFyaWFEQiAxMC4xMQogIGRiOgogICAgaW1hZ2U6IG1hcmlhZGI6MTAuMTEKICAgIGNvbnRhaW5lcl9uYW1lOiBsaWJyZW5tcy1kYgogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICAgIGVudmlyb25tZW50OgogICAgICAtIE1ZU1FMX1JPT1RfUEFTU1dPUkQ9JHtEQl9ST09UX1BBU1NXT1JEfQogICAgICAtIE1ZU1FMX0RBVEFCQVNFPSR7REJfTkFNRTotbGlicmVubXN9CiAgICAgIC0gTVlTUUxfVVNFUj0ke0RCX1VTRVI6LWxpYnJlbm1zfQogICAgICAtIE1ZU1FMX1BBU1NXT1JEPSR7REJfUEFTU1dPUkR9CiAgICAgIC0gVFo9JHtUWjotVVRDfQogICAgdm9sdW1lczoKICAgICAgLSAuL2RhdGEvZGI6L3Zhci9saWIvbXlzcWwKICAgIGNvbW1hbmQ6CiAgICAgIC0gLS1pbm5vZGItZmlsZS1wZXItdGFibGU9MQogICAgICAtIC0tbG93ZXItY2FzZS10YWJsZS1uYW1lcz0wCiAgICAgIC0gLS1tYXhfYWxsb3dlZF9wYWNrZXQ9NjRNCiAgICAgIC0gLS1pbm5vZGJfYnVmZmVyX3Bvb2xfc2l6ZT0yNTZNCiAgICBoZWFsdGhjaGVjazoKICAgICAgdGVzdDogWyJDTUQiLCAibXlzcWxhZG1pbiIsICJwaW5nIiwgIi1oIiwgImxvY2FsaG9zdCIsICItdSIsICJyb290IiwgIi1wJHtEQl9ST09UX1BBU1NXT1JEfSJdCiAgICAgIGludGVydmFsOiAxMHMKICAgICAgdGltZW91dDogNXMKICAgICAgcmV0cmllczogMTAKICAgIG5ldHdvcmtzOgogICAgICAtIGxpYnJlbm1zLW5ldAoKICAjIE1lbWNhY2hlZAogIG1lbWNhY2hlZDoKICAgIGltYWdlOiBtZW1jYWNoZWQ6MS42LWFscGluZQogICAgY29udGFpbmVyX25hbWU6IGxpYnJlbm1zLW1lbWNhY2hlZAogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICAgIGNvbW1hbmQ6IC1tIDY0CiAgICBuZXR3b3JrczoKICAgICAgLSBsaWJyZW5tcy1uZXQKCiAgIyBSZWRpcwogIHJlZGlzOgogICAgaW1hZ2U6IHJlZGlzOjctYWxwaW5lCiAgICBjb250YWluZXJfbmFtZTogbGlicmVubXMtcmVkaXMKICAgIHJlc3RhcnQ6IHVubGVzcy1zdG9wcGVkCiAgICBjb21tYW5kOiByZWRpcy1zZXJ2ZXIgLS1tYXhtZW1vcnkgMjU2bWIgLS1tYXhtZW1vcnktcG9saWN5IGFsbGtleXMtbHJ1CiAgICB2b2x1bWVzOgogICAgICAtIC4vZGF0YS9yZWRpczovZGF0YQogICAgbmV0d29ya3M6CiAgICAgIC0gbGlicmVubXMtbmV0CgpuZXR3b3JrczoKICBsaWJyZW5tcy1uZXQ6CiAgICBkcml2ZXI6IGJyaWRnZQo="
+
+extract_docker_compose() {
+  # Use the base64-encoded compose file embedded in the variable above
+  if command -v python3 &>/dev/null; then
+    python3 -c "
+import base64, sys
+b64 = '''$EMBEDDED_COMPOSE_B64'''
+sys.stdout.buffer.write(base64.b64decode(b64))
+" 2>/dev/null && return 0
+  fi
+  # Fallback: use script directory (for curl|bash without sudo)
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [[ -f "$SCRIPT_DIR/docker-compose.yml" ]] && {
+    cat "$SCRIPT_DIR/docker-compose.yml"
+    return 0
+  }
+  die "Cannot find docker-compose.yml — re-download the installer"
 }
 
 #-------------------------- Validation helpers --------------------------
@@ -239,10 +251,8 @@ if [[ "$DRY_RUN" == true ]]; then
   info "Install dir: $INSTALL_DIR"
   info "Base URL: $BASE_URL"
   info "Timezone: $TZ | Pollers: $POLLERS"
-  info "Database: $DB_NAME / $DB_USER"
-  info "Admin: admin / $ADMIN_PASS / $ADMIN_EMAIL"
   info "Firewall: $([ "$SKIP_FIREWALL" == true ] && echo skipped || echo configured)"
-  info "SSL: $([ "$SKIP_SSL" == true ] && echo skipped || echo none \(HTTP only\))"
+  info "SSL: $([ "$SKIP_SSL" == true ] && echo skipped || echo 'none-HTTP-only')"
   info "Creds file: ${SAVE_CREDS:-<not saved>}"
   info "Would create: $INSTALL_DIR/{data,logs,config,rrd}"
   info "Would copy docker-compose.yml, create .env, start services"
@@ -264,12 +274,21 @@ fi
 #-------------------------- Install directory ---------------------------
 mkdir -p "$INSTALL_DIR"/{data/{librenms,db,redis},logs/librenms,config/librenms,rrd}
 cd "$INSTALL_DIR" || die "Cannot access $INSTALL_DIR"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f docker-compose.yml ]] || cp "$SCRIPT_DIR/docker-compose.yml" .
 
-#-------------------------- Environment file ----------------------------
-[[ -f .env && "$FORCE" == false ]] && backup_file .env
-cat >.env <<EOF
+# Use embedded docker-compose.yml for curl|bash mode; otherwise copy from script dir
+if [[ -f docker-compose.yml ]]; then
+  info "Using existing docker-compose.yml"
+else
+  info "Extracting embedded docker-compose.yml"
+  extract_docker_compose >docker-compose.yml
+fi
+
+#-------------------------- Environment file (idempotent) ---------------
+if [[ -f .env && "$FORCE" == false ]]; then
+  info ".env already exists — preserving (use --force to overwrite)"
+elif [[ -f .env && "$FORCE" == true ]]; then
+  backup_file .env
+  cat >.env <<EOF
 # LibreNMS Docker Compose Environment
 # Generated by librenms-auto-install.sh on $(date)
 TZ=${TZ}
@@ -283,11 +302,34 @@ DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
 MEMCACHED_HOST=${MEMCACHED_HOST}
 REDIS_HOST=${REDIS_HOST}
 POLLERS=${POLLERS}
-ENABLE_SYSLOG=${ENABLE_SYSLOG}
-ENABLE_SNMPTRAP=${ENABLE_SNMPTRAP}
+SIDECAR_DISPATCHER=true
+SIDECAR_SYSLOGNG=true
+SIDECAR_SNMPTRAPD=true
 EOF
-chmod 600 .env
-info "Created .env file (chmod 600)"
+  chmod 600 .env
+  info "Overwrote .env (--force) — chmod 600"
+else
+  cat >.env <<EOF
+# LibreNMS Docker Compose Environment
+# Generated by librenms-auto-install.sh on $(date)
+TZ=${TZ}
+PUID=${PUID}
+PGID=${PGID}
+BASE_URL=${BASE_URL}
+DB_NAME=${DB_NAME}
+DB_USER=${DB_USER}
+DB_PASSWORD=${DB_PASSWORD}
+DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+MEMCACHED_HOST=${MEMCACHED_HOST}
+REDIS_HOST=${REDIS_HOST}
+POLLERS=${POLLERS}
+SIDECAR_DISPATCHER=true
+SIDECAR_SYSLOGNG=true
+SIDECAR_SNMPTRAPD=true
+EOF
+  chmod 600 .env
+  info "Created .env (chmod 600)"
+fi
 
 #-------------------------- Save credentials ----------------------------
 if [[ -n "$SAVE_CREDS" ]]; then
@@ -314,9 +356,9 @@ chown -R "$PUID:$PGID" "$INSTALL_DIR"/data "$INSTALL_DIR"/logs "$INSTALL_DIR"/co
 #-------------------------- Firewall ------------------------------------
 if [[ "$SKIP_FIREWALL" == false ]] && command -v ufw &>/dev/null; then
   ufw allow 80/tcp comment 'LibreNMS HTTP'
-  ufw allow 161/udp comment 'LibreNMS SNMP'
+  ufw allow 162/udp comment 'LibreNMS SNMP-Trap'
   ufw allow 514/udp comment 'LibreNMS Syslog'
-  ufw allow 10050/tcp comment 'LibreNMS Agent'
+  ufw allow 161/udp comment 'LibreNMS SNMP'
   info "UFW rules added (run 'ufw enable' to activate)"
 elif command -v ufw &>/dev/null; then
   info "Skipping firewall configuration as requested"
@@ -350,14 +392,24 @@ for i in $(seq 1 60); do
   [[ $i -eq 60 ]] && die "LibreNMS did not become ready in time"
 done
 
-#-------------------------- Initialize ----------------------------------
+#-------------------------- Initialize (idempotent) --------------------
 info "Running database migrations..."
 $DOCKER_COMPOSE exec -T librenms php /opt/librenms/artisan migrate --force || warn "Migration had warnings"
 info "Seeding database..."
 $DOCKER_COMPOSE exec -T librenms php /opt/librenms/artisan librenms:seed || warn "Seed had warnings"
-info "Creating admin user..."
-$DOCKER_COMPOSE exec -T librenms php /opt/librenms/artisan librenms:adduser \
-  --name="admin" --pass="$ADMIN_PASS" --email="$ADMIN_EMAIL" --role=10 || warn "Admin user may already exist"
+
+# Create admin user only if it doesn't already exist (idempotent)
+info "Checking for existing admin user..."
+ADMIN_EXISTS=$($DOCKER_COMPOSE exec -T librenms mysql -hdb -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -e "SELECT COUNT(*) FROM users WHERE username='admin';" 2>/dev/null | tail -1)
+ADMIN_EXISTS=${ADMIN_EXISTS:-0}
+if [[ "$ADMIN_EXISTS" -gt 0 ]]; then
+  info "Admin user already exists — preserving credentials"
+else
+  info "Creating admin user..."
+  $DOCKER_COMPOSE exec -T librenms php /opt/librenms/artisan librenms:adduser \
+    --name="admin" --pass="$ADMIN_PASS" --email="$ADMIN_EMAIL" --role=10 ||
+    warn "Admin user creation failed"
+fi
 
 #-------------------------- Summary -------------------------------------
 cat <<EOF
