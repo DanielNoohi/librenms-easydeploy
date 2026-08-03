@@ -11,39 +11,37 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
-
       - name: Run ShellCheck
         run: shellcheck librenms-auto-install.sh
-
       - name: Install shfmt
         run: |
           curl -sSL https://github.com/mvdan/sh/releases/download/v3.8.0/shfmt_v3.8.0_linux_amd64 -o shfmt
           chmod +x shfmt
           sudo mv shfmt /usr/local/bin/
-
       - name: Check formatting
-        run: shfmt -d librenms-auto-install.sh
+        run: shfmt -d -i 2 librenms-auto-install.sh
 
   test:
     name: Tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Install Bats and dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y bats
           mkdir -p test/test_helper
-          git clone --depth 1 https://github.com/bats-core/bats-support.git test/test_helper/bats-support
-          git clone --depth 1 https://github.com/bats-core/bats-assert.git test/test_helper/bats-assert
-
+          for i in 1 2 3; do
+            git clone --depth 1 https://github.com/bats-core/bats-support.git test/test_helper/bats-support && break
+            sleep 2
+          done
+          for i in 1 2 3; do
+            git clone --depth 1 https://github.com/bats-core/bats-assert.git test/test_helper/bats-assert && break
+            sleep 2
+          done
       - name: Run Bats tests
         run: bats test/
 
@@ -51,15 +49,11 @@ jobs:
     name: Docker Compose Validation
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Validate docker-compose.yml
         run: docker compose -f docker-compose.yml config --quiet
-
       - name: Check pinned images
         run: |
-          # Ensure no :latest tags
           if grep -q ':latest' docker-compose.yml; then
             echo "ERROR: Found :latest tag in docker-compose.yml"
             exit 1
@@ -70,19 +64,14 @@ jobs:
     name: Security Checks
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Check for secrets
         run: |
-          # Check for hardcoded passwords/secrets
           if grep -rE '(password|secret|token|key)\s*=\s*["'"'"'][^"'"'"']{8,}' --include="*.sh" --include="*.yml" --include="*.md" .; then
             echo "WARNING: Potential hardcoded secret found"
           fi
-
       - name: Check file permissions
         run: |
-          # Check .env.example doesn't have real passwords
           if grep -q 'changeme\|password123\|secret' .env.example 2>/dev/null; then
             echo "INFO: .env.example contains placeholder values (expected)"
           fi
