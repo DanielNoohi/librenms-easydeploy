@@ -82,13 +82,6 @@ validate_timezone() {
   [[ -f "/usr/share/zoneinfo/$1" ]] || warn "Timezone '$1' may not be valid (not found in /usr/share/zoneinfo)"
 }
 
-validate_port() {
-  local port="$1"
-  if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-    die "Invalid port: $port"
-  fi
-}
-
 validate_email() {
   local email="$1"
   [[ "$email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]] || die "Invalid email format: $email"
