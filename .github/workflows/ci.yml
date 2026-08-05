@@ -121,8 +121,15 @@ jobs:
           echo "POLLERS=2" >> .env
           echo "ADMIN_PASS=e2eadminpass123" >> .env
           echo "ADMIN_EMAIL=admin@e2etest.local" >> .env
-          cat .env
+          echo "=== .env contents ==="
+          cat -A .env
+          echo "=== docker compose config ==="
+          docker compose config --quiet
+          echo "=== docker compose up ==="
+          set -x
           docker compose up -d
+          set +x
+          docker compose ps
       - name: Wait for services
         run: |
           set -x
