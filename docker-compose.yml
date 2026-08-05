@@ -1,8 +1,12 @@
 services:
-  # LibreNMS with built-in sidecar services (dispatcher, syslog, SNMP trap)
+  # LibreNMS web application + alerting
   librenms:
     image: librenms/librenms:25.4.1
     container_name: librenms
+    hostname: librenms
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
     restart: unless-stopped
     environment:
       - TZ=${TZ:-UTC}
@@ -13,14 +17,13 @@ services:
       - DB_USER=${DB_USER:-librenms}
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_PORT=3306
-      - MEMCACHED_HOST=memcached
-      - REDIS_HOST=redis
+      - DB_TIMEOUT=60
+      - MEMCACHED_HOST=${MEMCACHED_HOST:-memcached}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - CACHE_DRIVER=${CACHE_DRIVER:-redis}
+      - SESSION_DRIVER=${SESSION_DRIVER:-redis}
       - BASE_URL=${BASE_URL:-http://localhost}
       - POLLERS=${POLLERS:-16}
-      # Official LibreNMS sidecar service flags
-      - SIDECAR_DISPATCHER=true
-      - SIDECAR_SYSLOGNG=true
-      - SIDECAR_SNMPTRAPD=true
     volumes:
       - ./data/librenms:/data
       - ./logs/librenms:/opt/librenms/logs
@@ -28,15 +31,13 @@ services:
       - ./rrd:/opt/librenms/rrd
     ports:
       - "80:8000"
-      - "514:514/udp"
-      - "162:162/udp"
     depends_on:
       db:
         condition: service_healthy
       memcached:
-        condition: service_started
+        condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     networks:
       - librenms-net
     healthcheck:
@@ -45,6 +46,106 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  # Distributed poller (official sidecar — SIDECAR_DISPATCHER=1)
+  dispatcher:
+    image: librenms/librenms:25.4.1
+    container_name: librenms-dispatcher
+    hostname: librenms-dispatcher
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-librenms}
+      - DB_USER=${DB_USER:-librenms}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=3306
+      - DB_TIMEOUT=60
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - SIDECAR_DISPATCHER=1
+    volumes:
+      - ./data/librenms:/data
+      - ./logs/librenms:/opt/librenms/logs
+    depends_on:
+      librenms:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    networks:
+      - librenms-net
+
+  # Syslog-ng sidecar (official — SIDECAR_SYSLOGNG=1, UDP 514)
+  syslogng:
+    image: librenms/librenms:25.4.1
+    container_name: librenms-syslogng
+    hostname: librenms-syslogng
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-librenms}
+      - DB_USER=${DB_USER:-librenms}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=3306
+      - DB_TIMEOUT=60
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - SIDECAR_SYSLOGNG=1
+    volumes:
+      - ./data/librenms:/data
+      - ./logs/librenms:/opt/librenms/logs
+    ports:
+      - "514:514/udp"
+    depends_on:
+      librenms:
+        condition: service_started
+      db:
+        condition: service_healthy
+    networks:
+      - librenms-net
+
+  # SNMP trap receiver (official — SIDECAR_SNMPTRAPD=1, UDP 162)
+  snmptrapd:
+    image: librenms/librenms:25.4.1
+    container_name: librenms-snmptrapd
+    hostname: librenms-snmptrapd
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DB_HOST=db
+      - DB_NAME=${DB_NAME:-librenms}
+      - DB_USER=${DB_USER:-librenms}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=3306
+      - DB_TIMEOUT=60
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - SIDECAR_SNMPTRAPD=1
+    volumes:
+      - ./data/librenms:/data
+      - ./logs/librenms:/opt/librenms/logs
+    ports:
+      - "162:162/udp"
+    depends_on:
+      librenms:
+        condition: service_started
+      db:
+        condition: service_healthy
+    networks:
+      - librenms-net
 
   # MariaDB 10.11
   db:
@@ -62,6 +163,8 @@ services:
     command:
       - --innodb-file-per-table=1
       - --lower-case-table-names=0
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
       - --max_allowed_packet=64M
       - --innodb_buffer_pool_size=256M
     healthcheck:
@@ -69,10 +172,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
     networks:
       - librenms-net
 
-  # Memcached
+  # Memcached (cache backend)
   memcached:
     image: memcached:1.6-alpine
     container_name: librenms-memcached
@@ -80,8 +184,14 @@ services:
     command: -m 64
     networks:
       - librenms-net
+    healthcheck:
+      test: ["CMD", "memcached-tool", "127.0.0.1", "stats"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
-  # Redis
+  # Redis (cache + queue backend)
   redis:
     image: redis:7-alpine
     container_name: librenms-redis
@@ -91,6 +201,12 @@ services:
       - ./data/redis:/data
     networks:
       - librenms-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 networks:
   librenms-net:

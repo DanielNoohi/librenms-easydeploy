@@ -85,11 +85,17 @@ sudo ./librenms-auto-install.sh --dry-run -n -u http://librenms.example.com
 - Strong 32-char passwords for DB root, DB user, and admin user
 - Credentials never on command line — passed via `.env` (`chmod 600`)
 - Non-root containers (PUID/PGID 1000)
-- UFW firewall rules for ports 80, 161/udp, 514/udp, 10050/tcp
+- UFW firewall rules added by the installer:
+  - `80/tcp` — LibreNMS web UI (HTTP)
+  - `161/udp` — SNMP (device polling from this host)
+  - `162/udp` — SNMP traps (snmptrapd sidecar)
+  - `514/udp` — Syslog ingestion (syslogng sidecar)
+- Reruns are idempotent: existing `.env` credentials (DB and admin) are
+  loaded and reused; nothing is regenerated or overwritten without `--force`
 - No interference with existing Zabbix (ports 10050/10051) or Lansweeper
 - Data persistence — all data in `./data/` survives container updates
 - Pinned Docker images — no `:latest` tags
-- Health checks on all services
+- Health checks on all services (db, redis, memcached, librenms)
 
 ---
 
@@ -99,7 +105,42 @@ sudo ./librenms-auto-install.sh --dry-run -n -u http://librenms.example.com
 - Docker Engine + Docker Compose v2
 - Root/sudo access
 - 4 GB RAM minimum (8 GB recommended for >500 devices)
-- Ports 80, 161/udp, 514/udp available
+- Ports 80/tcp, 161/udp, 162/udp, 514/udp available
+
+---
+
+## Firewall
+
+The installer adds UFW rules automatically (unless `--no-firewall`):
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 80   | TCP      | LibreNMS web UI |
+| 161  | UDP      | SNMP polling (outbound from this host) |
+| 162  | UDP      | SNMP trap receiver (snmptrapd sidecar) |
+| 514  | UDP      | Syslog receiver (syslogng sidecar) |
+
+It does **not** run `ufw enable` — you must enable the firewall yourself:
+
+```bash
+sudo ufw enable
+```
+
+> **Note:** The installer's UFW rules only protect the host. Docker
+> publishes container ports (`80/tcp`, `162/udp`, `514/udp`) through
+> iptables, which **bypasses UFW**. If you need to restrict access to
+> these ports, configure them in the `DOCKER-USER` chain instead:
+>
+> ```bash
+> # Example: block all except your management subnet (10.0.0.0/8)
+> sudo iptables -I DOCKER-USER -p tcp --dport 80 ! -s 10.0.0.0/8 -j DROP
+> sudo iptables -I DOCKER-USER -p udp --dport 162 ! -s 10.0.0.0/8 -j DROP
+> sudo iptables -I DOCKER-USER -p udp --dport 514 ! -s 10.0.0.0/8 -j DROP
+> ```
+>
+> See the Docker documentation on
+> [Docker and UFW](https://docs.docker.com/network/packet-filtering-firewalls/)
+> for details.
 
 ---
 
@@ -113,19 +154,26 @@ sudo ./librenms-auto-install.sh --dry-run -n -u http://librenms.example.com
 │  (app)       │ (MariaDB) │  (cache)   │  (cache/queue)     │
 │  Port 8000   │ Port 3306 │ Port 11211 │    Port 6379       │
 ├──────────────┼───────────┼────────────┼────────────────────┤
-│  dispatcher  │  syslogd  │  snmptrapd │                    │
+│  dispatcher  │ syslogng  │ snmptrapd  │                    │
 │  (polling)   │ (UDP 514) │ (UDP 162)  │                    │
 └──────────────┴───────────┴────────────┴────────────────────┘
 ```
 
 **Services:**
-- **librenms** — Main web UI, polling, alerting (port 80 → 8000)
-- **dispatcher** — Distributed polling (required)
-- **syslogd** — Network device syslog ingestion (UDP 514)
-- **snmptrapd** — SNMP trap receiver (UDP 162)
+- **librenms** — Main web UI, alerting (port 80 → 8000)
+- **dispatcher** — Distributed poller (sidecar, `SIDECAR_DISPATCHER=1`)
+- **syslogng** — Syslog ingestion (sidecar, `SIDECAR_SYSLOGNG=1`, UDP 514)
+- **snmptrapd** — SNMP trap receiver (sidecar, `SIDECAR_SNMPTRAPD=1`, UDP 162)
 - **db** — MariaDB 10.11
-- **memcached** — Caching
-- **redis** — Queue/cache backend
+- **memcached** — Cache backend
+- **redis** — Cache/queue backend
+
+The dispatcher, syslogng, and snmptrapd sidecars follow the
+[official LibreNMS Docker design](https://github.com/librenms/docker):
+each is a separate container running the same image with the matching
+`SIDECAR_*` flag set to `1` (not the main container). This keeps
+polling, syslog, and trap ingestion isolated and independently
+restartable.
 
 **Volumes:**
 - `./data/librenms` — LibreNMS data, configs, RRD files

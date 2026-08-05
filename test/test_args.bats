@@ -90,3 +90,23 @@ setup() {
   run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --timezone UTC
   assert_success
 }
+
+@test "Help shows NOT production-hardened disclaimer" {
+  run "$SCRIPT" --help
+  assert_success
+  assert_output "NOT production-hardened"
+}
+
+@test "Dry-run shows sidecar container plan" {
+  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com
+  assert_success
+  assert_output "Would copy docker-compose.yml"
+  assert_output "create .env"
+  assert_output "start services"
+}
+
+@test "Invalid timezone format warns but continues" {
+  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --timezone "Invalid/Timezone"
+  assert_success
+  assert_output "may not be valid"
+}

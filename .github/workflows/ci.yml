@@ -8,59 +8,160 @@ on:
 
 jobs:
   lint:
-    name: Lint
+    name: Lint (shellcheck + shfmt)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: Run ShellCheck
-        run: shellcheck librenms-auto-install.sh
-      - name: Install shfmt
+      - name: Install shellcheck + shfmt
         run: |
-          curl -sSL https://github.com/mvdan/sh/releases/download/v3.8.0/shfmt_v3.8.0_linux_amd64 -o shfmt
-          chmod +x shfmt
-          sudo mv shfmt /usr/local/bin/
-      - name: Check formatting
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          curl -sSL https://github.com/mvdan/sh/releases/download/v3.8.0/shfmt_v3.8.0_linux_amd64 -o /usr/local/bin/shfmt
+          chmod +x /usr/local/bin/shfmt
+      - name: ShellCheck
+        run: shellcheck librenms-auto-install.sh
+      - name: shfmt
         run: shfmt -d -i 2 librenms-auto-install.sh
 
   test:
-    name: Tests
+    name: Bats tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Bats
-        run: sudo apt-get update && sudo apt-get install -y bats
-      - name: Run Bats tests
+      - name: Install bats
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
+      - name: Bats tests
         run: bats test/
 
   compose:
-    name: Docker Compose Validation
+    name: Docker Compose validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Validate docker-compose.yml
         run: docker compose -f docker-compose.yml config --quiet
-      - name: Check pinned images
+      - name: No :latest tags
         run: |
           if grep -q ':latest' docker-compose.yml; then
-            echo "ERROR: Found :latest tag in docker-compose.yml"
+            echo "::error::Found :latest tag in docker-compose.yml"
             exit 1
           fi
-          echo "All images are pinned"
+          echo "All images pinned"
+      - name: Sidecar services present
+        run: docker compose -f docker-compose.yml config --format json | python3 -c "import json,sys; d=json.load(sys.stdin); [assert s in d.get('services',{}) for s in ('dispatcher','syslogng','snmptrapd')]; print('All sidecars present')"
+      - name: Healthchecks present
+        run: docker compose -f docker-compose.yml config --format json | python3 -c "import json,sys; d=json.load(sys.stdin); [d['services'][s].get('healthcheck') or sys.exit(f'{s} missing healthcheck') for s in ('db','redis','memcached','librenms')]; print('All healthchecks present')"
 
-  security:
-    name: Security Checks
+  secret-scan:
+    name: Secret scanning (fail CI)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check for secrets
+      - name: Scan for embedded secrets
         run: |
-          if grep -rE '(password|secret|token|key)\s*=\s*["'"'"'][^"'"'"']{8,}' --include="*.sh" --include="*.yml" --include="*.md" .; then
-            echo "WARNING: Potential hardcoded secret found"
+          FAIL=0
+          echo "=== Scanning for real secrets ==="
+          if grep -qE 'DB_PASSWORD=.{8,}|DB_ROOT_PASSWORD=.{8,}' .env.example 2>/dev/null; then
+            if ! grep -q 'changeme' .env.example; then
+              echo "::error file=.env.example::Credentials look like real secrets"
+              FAIL=1
+            fi
           fi
-      - name: Check file permissions
+          echo "Checking embedded compose for plaintext secrets..."
+          COMPOSE=$(grep -oE 'EMBEDDED_COMPOSE_B64="[^"]*"' librenms-auto-install.sh | sed 's/EMBEDDED_COMPOSE_B64="//;s/"$//' | base64 -d 2>/dev/null || true)
+          if echo "$COMPOSE" | grep -qiE 'password\s*[=:]\s*[a-zA-Z0-9]{8,}'; then
+            echo "::error::Embedded compose contains hardcoded passwords"
+            FAIL=1
+          fi
+          echo "=== Secret scan complete ==="
+          exit $FAIL
+
+  e2e:
+    name: E2E Docker Compose startup
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start full stack
         run: |
-          if grep -q 'changeme\|password123\|secret' .env.example 2>/dev/null; then
-            echo "INFO: .env.example contains placeholder values (expected)"
+          INSTALL_DIR="/opt/librenms-e2e"
+          mkdir -p "$INSTALL_DIR"
+          cp docker-compose.yml "$INSTALL_DIR/"
+          cd "$INSTALL_DIR"
+          cat > .env <<'EENV'
+          TZ=UTC
+          PUID=1000
+          PGID=1000
+          DB_NAME=librenms
+          DB_USER=librenms
+          DB_PASSWORD=e2etestpass123
+          DB_ROOT_PASSWORD=e2etestroot123
+          MEMCACHED_HOST=memcached
+          REDIS_HOST=redis
+          CACHE_DRIVER=redis
+          SESSION_DRIVER=redis
+          BASE_URL=http://localhost
+          POLLERS=2
+          ADMIN_PASS=e2eadminpass123
+          ADMIN_EMAIL=admin@e2etest.local
+          EENV
+          docker compose up -d
+      - name: Wait for healthchecks
+        run: |
+          cd /opt/librenms-e2e
+          echo "Waiting for services..."
+          for i in $(seq 1 90); do
+            RUNNING=$(docker compose ps --format json 2>/dev/null | python3 -c "
+          import json,sys
+          ok=0
+          for line in sys.stdin:
+              try:
+                  d=json.loads(line)
+                  if d.get('State')=='running':
+                      ok+=1
+              except: pass
+          print(ok)
+          " 2>/dev/null || echo "0")
+            echo "  $i: $RUNNING services running"
+            if [ "$RUNNING" -ge 7 ]; then
+              echo "All 7 services started"
+              break
+            fi
+            sleep 5
+          done
+          docker compose ps
+      - name: Verify web UI
+        run: |
+          cd /opt/librenms-e2e
+          sleep 10
+          HTTP_CODE=$(docker compose exec -T librenms curl -sf -o /dev/null -w '%{http_code}' http://localhost:8000 2>/dev/null || echo "000")
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 500 ]; then
+            echo "LibreNMS web UI responding: HTTP $HTTP_CODE"
+          else
+            echo "::error::LibreNMS web UI not responding: HTTP $HTTP_CODE"
+            docker compose logs --tail=50 librenms
+            exit 1
           fi
+      - name: Verify sidecar services running
+        run: |
+          cd /opt/librenms-e2e
+          for svc in dispatcher syslogng snmptrapd; do
+            STATE=$(docker compose ps --format json 2>/dev/null | python3 -c "
+          import json,sys
+          for line in sys.stdin:
+              try:
+                  d=json.loads(line)
+                  if d.get('Service')=='$svc':
+                      print(d.get('State','unknown'))
+              except: pass
+          " 2>/dev/null || echo "unknown")
+            echo "  $svc: $STATE"
+            if [ "$STATE" != "running" ]; then
+              echo "::error::$svc sidecar not running"
+              docker compose logs --tail=20 "$svc" || true
+              exit 1
+            fi
+          done
+      - name: Cleanup
+        if: always()
+        run: cd /opt/librenms-e2e && docker compose down -v --remove-orphans 2>/dev/null || true

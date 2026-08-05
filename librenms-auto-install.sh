@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
-# librenms-auto-install.sh - Production-ready LibreNMS installer
+# librenms-auto-install.sh - LibreNMS Docker Compose installer
 # Installs LibreNMS via Docker Compose with secure defaults
+#
+# NOT PRODUCTION-HARDENED: single-node Docker Compose stack for labs,
+# homelabs, and small deployments. See README "Caveats" section.
 
 set -euo pipefail
 IFS=$'\n\t'
+
+# Never fail silently: report the failing command and line, then exit 1
+# shellcheck disable=SC2154  # rc is set via $? inside the trap
+trap 'rc=$?; msg="[ERROR] command failed at line $LINENO: $BASH_COMMAND (exit $rc)"; echo "$msg" >&2; echo "$msg" >>"${LOG_FILE:-/var/log/librenms-easydeploy.log}" 2>/dev/null || true; exit $rc' ERR
 
 #-------------------------- Defaults ------------------------------------
 INSTALL_DIR="/opt/librenms-easydeploy"
@@ -39,6 +46,10 @@ log() {
   ts=$(date '+%Y-%m-%d %H:%M:%S')
   msg="[$ts] [$level] $*"
   echo "$msg"
+  # Dry-run: never write to the log file (zero system changes)
+  if [[ "$DRY_RUN" == true ]]; then
+    return 0
+  fi
   if [[ -w "$LOG_FILE" ]] 2>/dev/null || [[ -w "$(dirname "$LOG_FILE")" ]] 2>/dev/null; then
     echo "$msg" >>"$LOG_FILE"
   fi
@@ -64,7 +75,7 @@ print(''.join(secrets.choice(alphabet) for _ in range($len)))
 }
 
 #-------------------------- Embedded docker-compose.yml (for curl|bash mode) --
-EMBEDDED_COMPOSE_B64="c2VydmljZXM6CiAgIyBMaWJyZU5NUyB3aXRoIGJ1aWx0LWluIHNpZGVjYXIgc2VydmljZXMgKGRpc3BhdGNoZXIsIHN5c2xvZywgU05NUCB0cmFwKQogIGxpYnJlbm1zOgogICAgaW1hZ2U6IGxpYnJlbm1zL2xpYnJlbm1zOjI1LjQuMQogICAgY29udGFpbmVyX25hbWU6IGxpYnJlbm1zCiAgICByZXN0YXJ0OiB1bmxlc3Mtc3RvcHBlZAogICAgZW52aXJvbm1lbnQ6CiAgICAgIC0gVFo9JHtUWjotVVRDfQogICAgICAtIFBVSUQ9e1BVSUQ6LTEwMDB9CiAgICAgIC0gUEdJRD17UEdJRDotMTAwMH0KICAgICAgLSBEQl9IT1NUPWRiCiAgICAgIC0gREJfTkFNRT0ke0RCX05BTUU6LWxpYnJlbm1zfQogICAgICAtIERCX1VTRVI9e0RCX1VTRVI6LWxpYnJlbm1zfQogICAgICAtIERCX1BBU1NXT1JEPXskREJfUEFTU1dPUkR9CiAgICAgIC0gREJfUE9SVD0zMzA2CiAgICAgIC0gTUVNQ0FDSEVEX0hPU1Q9bWVtY2FjaGVkCiAgICAgIC0gUkVESVNfSE9TVD1yZWRpcwogICAgICAtIEJBU0VfVVJMPSR7QkFTRV9VUkw6LWh0dHA6Ly9sb2NhbGhvc3R9CiAgICAgIC0gUE9MTEVSUz0ke1BPTExFUlM6LTE2fQogICAgICAjIE9mZmljaWFsIExpYnJlTk1TIHNpZGVjYXIgc2VydmljZSBmbGFncwogICAgICAtIFNJREVDQVJfRElTUEFUQ0hFUj10cnVlCiAgICAgIC0gU0lERUNBUl9TWVNMT0dORz10cnVlCiAgICAgIC0gU0lERUNBUl9TTk1QVFJBUFREPXRydWUKICAgIHZvbHVtZXM6CiAgICAgIC0gLi9kYXRhL2xpYnJlbm1zOi9kYXRhCiAgICAgIC0gLi9sb2dzL2xpYnJlbm1zOi9vcHQvbGlicmVubXMvbG9ncwogICAgICAtIC4vY29uZmlnL2xpYnJlbm1zOi9vcHQvbGlicmVubXMvY29uZmlnLmQKICAgICAgLSAuL3JyZDovb3B0L2xpYnJlbm1zL3JyZAogICAgcG9ydHM6CiAgICAgIC0gIjgwOjgwMDAiCiAgICAgIC0gIjUxNDo1MTQvdWRwIgogICAgICAtICIxNjI6MTYyL3VkcCIKICAgIGRlcGVuZHNfb246CiAgICAgIGRiOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5CiAgICAgIG1lbWNhY2hlZDoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgICByZWRpczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgbmV0d29ya3M6CiAgICAgIC0gbGlicmVubXMtbmV0CiAgICBoZWFsdGhjaGVjazoKICAgICAgdGVzdDogWyJDTUQiLCAiY3VybCIsICItZiIsICJodHRwOi8vbG9jYWxob3N0OjgwMDAiXQogICAgICBpbnRlcnZhbDogMzBzCiAgICAgIHRpbWVvdXQ6IDEwcwogICAgICByZXRyaWVzOiAzCiAgICAgIHN0YXJ0X3BlcmlvZDogNjBzCgogICMgTWFyaWFEQiAxMC4xMQogIGRiOgogICAgaW1hZ2U6IG1hcmlhZGI6MTAuMTEKICAgIGNvbnRhaW5lcl9uYW1lOiBsaWJyZW5tcy1kYgogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICAgIGVudmlyb25tZW50OgogICAgICAtIE1ZU1FMX1JPT1RfUEFTU1dPUkQ9JHtEQl9ST09UX1BBU1NXT1JEfQogICAgICAtIE1ZU1FMX0RBVEFCQVNFPSR7REJfTkFNRTotbGlicmVubXN9CiAgICAgIC0gTVlTUUxfVVNFUj0ke0RCX1VTRVI6LWxpYnJlbm1zfQogICAgICAtIE1ZU1FMX1BBU1NXT1JEPSR7REJfUEFTU1dPUkR9CiAgICAgIC0gVFo9JHtUWjotVVRDfQogICAgdm9sdW1lczoKICAgICAgLSAuL2RhdGEvZGI6L3Zhci9saWIvbXlzcWwKICAgIGNvbW1hbmQ6CiAgICAgIC0gLS1pbm5vZGItZmlsZS1wZXItdGFibGU9MQogICAgICAtIC0tbG93ZXItY2FzZS10YWJsZS1uYW1lcz0wCiAgICAgIC0gLS1tYXhfYWxsb3dlZF9wYWNrZXQ9NjRNCiAgICAgIC0gLS1pbm5vZGJfYnVmZmVyX3Bvb2xfc2l6ZT0yNTZNCiAgICBoZWFsdGhjaGVjazoKICAgICAgdGVzdDogWyJDTUQiLCAibXlzcWxhZG1pbiIsICJwaW5nIiwgIi1oIiwgImxvY2FsaG9zdCIsICItdSIsICJyb290IiwgIi1wJHtEQl9ST09UX1BBU1NXT1JEfSJdCiAgICAgIGludGVydmFsOiAxMHMKICAgICAgdGltZW91dDogNXMKICAgICAgcmV0cmllczogMTAKICAgIG5ldHdvcmtzOgogICAgICAtIGxpYnJlbm1zLW5ldAoKICAjIE1lbWNhY2hlZAogIG1lbWNhY2hlZDoKICAgIGltYWdlOiBtZW1jYWNoZWQ6MS42LWFscGluZQogICAgY29udGFpbmVyX25hbWU6IGxpYnJlbm1zLW1lbWNhY2hlZAogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICAgIGNvbW1hbmQ6IC1tIDY0CiAgICBuZXR3b3JrczoKICAgICAgLSBsaWJyZW5tcy1uZXQKCiAgIyBSZWRpcwogIHJlZGlzOgogICAgaW1hZ2U6IHJlZGlzOjctYWxwaW5lCiAgICBjb250YWluZXJfbmFtZTogbGlicmVubXMtcmVkaXMKICAgIHJlc3RhcnQ6IHVubGVzcy1zdG9wcGVkCiAgICBjb21tYW5kOiByZWRpcy1zZXJ2ZXIgLS1tYXhtZW1vcnkgMjU2bWIgLS1tYXhtZW1vcnktcG9saWN5IGFsbGtleXMtbHJ1CiAgICB2b2x1bWVzOgogICAgICAtIC4vZGF0YS9yZWRpczovZGF0YQogICAgbmV0d29ya3M6CiAgICAgIC0gbGlicmVubXMtbmV0CgpuZXR3b3JrczoKICBsaWJyZW5tcy1uZXQ6CiAgICBkcml2ZXI6IGJyaWRnZQo="
+EMBEDDED_COMPOSE_B64="c2VydmljZXM6DQogICMgTGlicmVOTVMgd2ViIGFwcGxpY2F0aW9uICsgYWxlcnRpbmcNCiAgbGlicmVubXM6DQogICAgaW1hZ2U6IGxpYnJlbm1zL2xpYnJlbm1zOjI1LjQuMQ0KICAgIGNvbnRhaW5lcl9uYW1lOiBsaWJyZW5tcw0KICAgIGhvc3RuYW1lOiBsaWJyZW5tcw0KICAgIGNhcF9hZGQ6DQogICAgICAtIE5FVF9BRE1JTg0KICAgICAgLSBORVRfUkFXDQogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQNCiAgICBlbnZpcm9ubWVudDoNCiAgICAgIC0gVFo9JHtUWjotVVRDfQ0KICAgICAgLSBQVUlEPSR7UFVJRDotMTAwMH0NCiAgICAgIC0gUEdJRD0ke1BHSUQ6LTEwMDB9DQogICAgICAtIERCX0hPU1Q9ZGINCiAgICAgIC0gREJfTkFNRT0ke0RCX05BTUU6LWxpYnJlbm1zfQ0KICAgICAgLSBEQl9VU0VSPSR7REJfVVNFUjotbGlicmVubXN9DQogICAgICAtIERCX1BBU1NXT1JEPSR7REJfUEFTU1dPUkR9DQogICAgICAtIERCX1BPUlQ9MzMwNg0KICAgICAgLSBEQl9USU1FT1VUPTYwDQogICAgICAtIE1FTUNBQ0hFRF9IT1NUPSR7TUVNQ0FDSEVEX0hPU1Q6LW1lbWNhY2hlZH0NCiAgICAgIC0gUkVESVNfSE9TVD0ke1JFRElTX0hPU1Q6LXJlZGlzfQ0KICAgICAgLSBDQUNIRV9EUklWRVI9JHtDQUNIRV9EUklWRVI6LXJlZGlzfQ0KICAgICAgLSBTRVNTSU9OX0RSSVZFUj0ke1NFU1NJT05fRFJJVkVSOi1yZWRpc30NCiAgICAgIC0gQkFTRV9VUkw9JHtCQVNFX1VSTDotaHR0cDovL2xvY2FsaG9zdH0NCiAgICAgIC0gUE9MTEVSUz0ke1BPTExFUlM6LTE2fQ0KICAgIHZvbHVtZXM6DQogICAgICAtIC4vZGF0YS9saWJyZW5tczovZGF0YQ0KICAgICAgLSAuL2xvZ3MvbGlicmVubXM6L29wdC9saWJyZW5tcy9sb2dzDQogICAgICAtIC4vY29uZmlnL2xpYnJlbm1zOi9vcHQvbGlicmVubXMvY29uZmlnLmQNCiAgICAgIC0gLi9ycmQ6L29wdC9saWJyZW5tcy9ycmQNCiAgICBwb3J0czoNCiAgICAgIC0gIjgwOjgwMDAiDQogICAgZGVwZW5kc19vbjoNCiAgICAgIGRiOg0KICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQ0KICAgICAgbWVtY2FjaGVkOg0KICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQ0KICAgICAgcmVkaXM6DQogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5DQogICAgbmV0d29ya3M6DQogICAgICAtIGxpYnJlbm1zLW5ldA0KICAgIGhlYWx0aGNoZWNrOg0KICAgICAgdGVzdDogWyJDTUQiLCAiY3VybCIsICItZiIsICJodHRwOi8vbG9jYWxob3N0OjgwMDAiXQ0KICAgICAgaW50ZXJ2YWw6IDMwcw0KICAgICAgdGltZW91dDogMTBzDQogICAgICByZXRyaWVzOiAzDQogICAgICBzdGFydF9wZXJpb2Q6IDYwcw0KDQogICMgRGlzdHJpYnV0ZWQgcG9sbGVyIChvZmZpY2lhbCBzaWRlY2FyIOKAlCBTSURFQ0FSX0RJU1BBVENIRVI9MSkNCiAgZGlzcGF0Y2hlcjoNCiAgICBpbWFnZTogbGlicmVubXMvbGlicmVubXM6MjUuNC4xDQogICAgY29udGFpbmVyX25hbWU6IGxpYnJlbm1zLWRpc3BhdGNoZXINCiAgICBob3N0bmFtZTogbGlicmVubXMtZGlzcGF0Y2hlcg0KICAgIGNhcF9hZGQ6DQogICAgICAtIE5FVF9BRE1JTg0KICAgICAgLSBORVRfUkFXDQogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQNCiAgICBlbnZpcm9ubWVudDoNCiAgICAgIC0gVFo9JHtUWjotVVRDfQ0KICAgICAgLSBQVUlEPSR7UFVJRDotMTAwMH0NCiAgICAgIC0gUEdJRD0ke1BHSUQ6LTEwMDB9DQogICAgICAtIERCX0hPU1Q9ZGINCiAgICAgIC0gREJfTkFNRT0ke0RCX05BTUU6LWxpYnJlbm1zfQ0KICAgICAgLSBEQl9VU0VSPSR7REJfVVNFUjotbGlicmVubXN9DQogICAgICAtIERCX1BBU1NXT1JEPSR7REJfUEFTU1dPUkR9DQogICAgICAtIERCX1BPUlQ9MzMwNg0KICAgICAgLSBEQl9USU1FT1VUPTYwDQogICAgICAtIFJFRElTX0hPU1Q9JHtSRURJU19IT1NUOi1yZWRpc30NCiAgICAgIC0gU0lERUNBUl9ESVNQQVRDSEVSPTENCiAgICB2b2x1bWVzOg0KICAgICAgLSAuL2RhdGEvbGlicmVubXM6L2RhdGENCiAgICAgIC0gLi9sb2dzL2xpYnJlbm1zOi9vcHQvbGlicmVubXMvbG9ncw0KICAgIGRlcGVuZHNfb246DQogICAgICBsaWJyZW5tczoNCiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX3N0YXJ0ZWQNCiAgICAgIHJlZGlzOg0KICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQ0KICAgIG5ldHdvcmtzOg0KICAgICAgLSBsaWJyZW5tcy1uZXQNCg0KICAjIFN5c2xvZy1uZyBzaWRlY2FyIChvZmZpY2lhbCDigJQgU0lERUNBUl9TWVNMT0dORz0xLCBVRFAgNTE0KQ0KICBzeXNsb2duZzoNCiAgICBpbWFnZTogbGlicmVubXMvbGlicmVubXM6MjUuNC4xDQogICAgY29udGFpbmVyX25hbWU6IGxpYnJlbm1zLXN5c2xvZ25nDQogICAgaG9zdG5hbWU6IGxpYnJlbm1zLXN5c2xvZ25nDQogICAgY2FwX2FkZDoNCiAgICAgIC0gTkVUX0FETUlODQogICAgICAtIE5FVF9SQVcNCiAgICByZXN0YXJ0OiB1bmxlc3Mtc3RvcHBlZA0KICAgIGVudmlyb25tZW50Og0KICAgICAgLSBUWj0ke1RaOi1VVEN9DQogICAgICAtIFBVSUQ9JHtQVUlEOi0xMDAwfQ0KICAgICAgLSBQR0lEPSR7UEdJRDotMTAwMH0NCiAgICAgIC0gREJfSE9TVD1kYg0KICAgICAgLSBEQl9OQU1FPSR7REJfTkFNRTotbGlicmVubXN9DQogICAgICAtIERCX1VTRVI9JHtEQl9VU0VSOi1saWJyZW5tc30NCiAgICAgIC0gREJfUEFTU1dPUkQ9JHtEQl9QQVNTV09SRH0NCiAgICAgIC0gREJfUE9SVD0zMzA2DQogICAgICAtIERCX1RJTUVPVVQ9NjANCiAgICAgIC0gUkVESVNfSE9TVD0ke1JFRElTX0hPU1Q6LXJlZGlzfQ0KICAgICAgLSBTSURFQ0FSX1NZU0xPR05HPTENCiAgICB2b2x1bWVzOg0KICAgICAgLSAuL2RhdGEvbGlicmVubXM6L2RhdGENCiAgICAgIC0gLi9sb2dzL2xpYnJlbm1zOi9vcHQvbGlicmVubXMvbG9ncw0KICAgIHBvcnRzOg0KICAgICAgLSAiNTE0OjUxNC91ZHAiDQogICAgZGVwZW5kc19vbjoNCiAgICAgIGxpYnJlbm1zOg0KICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZA0KICAgICAgZGI6DQogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5DQogICAgbmV0d29ya3M6DQogICAgICAtIGxpYnJlbm1zLW5ldA0KDQogICMgU05NUCB0cmFwIHJlY2VpdmVyIChvZmZpY2lhbCDigJQgU0lERUNBUl9TTk1QVFJBUEQ9MSwgVURQIDE2MikNCiAgc25tcHRyYXBkOg0KICAgIGltYWdlOiBsaWJyZW5tcy9saWJyZW5tczoyNS40LjENCiAgICBjb250YWluZXJfbmFtZTogbGlicmVubXMtc25tcHRyYXBkDQogICAgaG9zdG5hbWU6IGxpYnJlbm1zLXNubXB0cmFwZA0KICAgIGNhcF9hZGQ6DQogICAgICAtIE5FVF9BRE1JTg0KICAgICAgLSBORVRfUkFXDQogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQNCiAgICBlbnZpcm9ubWVudDoNCiAgICAgIC0gVFo9JHtUWjotVVRDfQ0KICAgICAgLSBQVUlEPSR7UFVJRDotMTAwMH0NCiAgICAgIC0gUEdJRD0ke1BHSUQ6LTEwMDB9DQogICAgICAtIERCX0hPU1Q9ZGINCiAgICAgIC0gREJfTkFNRT0ke0RCX05BTUU6LWxpYnJlbm1zfQ0KICAgICAgLSBEQl9VU0VSPSR7REJfVVNFUjotbGlicmVubXN9DQogICAgICAtIERCX1BBU1NXT1JEPSR7REJfUEFTU1dPUkR9DQogICAgICAtIERCX1BPUlQ9MzMwNg0KICAgICAgLSBEQl9USU1FT1VUPTYwDQogICAgICAtIFJFRElTX0hPU1Q9JHtSRURJU19IT1NUOi1yZWRpc30NCiAgICAgIC0gU0lERUNBUl9TTk1QVFJBUEQ9MQ0KICAgIHZvbHVtZXM6DQogICAgICAtIC4vZGF0YS9saWJyZW5tczovZGF0YQ0KICAgICAgLSAuL2xvZ3MvbGlicmVubXM6L29wdC9saWJyZW5tcy9sb2dzDQogICAgcG9ydHM6DQogICAgICAtICIxNjI6MTYyL3VkcCINCiAgICBkZXBlbmRzX29uOg0KICAgICAgbGlicmVubXM6DQogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9zdGFydGVkDQogICAgICBkYjoNCiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX2hlYWx0aHkNCiAgICBuZXR3b3JrczoNCiAgICAgIC0gbGlicmVubXMtbmV0DQoNCiAgIyBNYXJpYURCIDEwLjExDQogIGRiOg0KICAgIGltYWdlOiBtYXJpYWRiOjEwLjExDQogICAgY29udGFpbmVyX25hbWU6IGxpYnJlbm1zLWRiDQogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQNCiAgICBlbnZpcm9ubWVudDoNCiAgICAgIC0gTVlTUUxfUk9PVF9QQVNTV09SRD0ke0RCX1JPT1RfUEFTU1dPUkR9DQogICAgICAtIE1ZU1FMX0RBVEFCQVNFPSR7REJfTkFNRTotbGlicmVubXN9DQogICAgICAtIE1ZU1FMX1VTRVI9JHtEQl9VU0VSOi1saWJyZW5tc30NCiAgICAgIC0gTVlTUUxfUEFTU1dPUkQ9JHtEQl9QQVNTV09SRH0NCiAgICAgIC0gVFo9JHtUWjotVVRDfQ0KICAgIHZvbHVtZXM6DQogICAgICAtIC4vZGF0YS9kYjovdmFyL2xpYi9teXNxbA0KICAgIGNvbW1hbmQ6DQogICAgICAtIC0taW5ub2RiLWZpbGUtcGVyLXRhYmxlPTENCiAgICAgIC0gLS1sb3dlci1jYXNlLXRhYmxlLW5hbWVzPTANCiAgICAgIC0gLS1jaGFyYWN0ZXItc2V0LXNlcnZlcj11dGY4bWI0DQogICAgICAtIC0tY29sbGF0aW9uLXNlcnZlcj11dGY4bWI0X3VuaWNvZGVfY2kNCiAgICAgIC0gLS1tYXhfYWxsb3dlZF9wYWNrZXQ9NjRNDQogICAgICAtIC0taW5ub2RiX2J1ZmZlcl9wb29sX3NpemU9MjU2TQ0KICAgIGhlYWx0aGNoZWNrOg0KICAgICAgdGVzdDogWyJDTUQiLCAibXlzcWxhZG1pbiIsICJwaW5nIiwgIi1oIiwgImxvY2FsaG9zdCIsICItdSIsICJyb290IiwgIi1wJHtEQl9ST09UX1BBU1NXT1JEfSJdDQogICAgICBpbnRlcnZhbDogMTBzDQogICAgICB0aW1lb3V0OiA1cw0KICAgICAgcmV0cmllczogMTANCiAgICAgIHN0YXJ0X3BlcmlvZDogMzBzDQogICAgbmV0d29ya3M6DQogICAgICAtIGxpYnJlbm1zLW5ldA0KDQogICMgTWVtY2FjaGVkIChjYWNoZSBiYWNrZW5kKQ0KICBtZW1jYWNoZWQ6DQogICAgaW1hZ2U6IG1lbWNhY2hlZDoxLjYtYWxwaW5lDQogICAgY29udGFpbmVyX25hbWU6IGxpYnJlbm1zLW1lbWNhY2hlZA0KICAgIHJlc3RhcnQ6IHVubGVzcy1zdG9wcGVkDQogICAgY29tbWFuZDogLW0gNjQNCiAgICBuZXR3b3JrczoNCiAgICAgIC0gbGlicmVubXMtbmV0DQogICAgaGVhbHRoY2hlY2s6DQogICAgICB0ZXN0OiBbIkNNRCIsICJtZW1jYWNoZWQtdG9vbCIsICIxMjcuMC4wLjEiLCAic3RhdHMiXQ0KICAgICAgaW50ZXJ2YWw6IDE1cw0KICAgICAgdGltZW91dDogNXMNCiAgICAgIHJldHJpZXM6IDMNCiAgICAgIHN0YXJ0X3BlcmlvZDogMTBzDQoNCiAgIyBSZWRpcyAoY2FjaGUgKyBxdWV1ZSBiYWNrZW5kKQ0KICByZWRpczoNCiAgICBpbWFnZTogcmVkaXM6Ny1hbHBpbmUNCiAgICBjb250YWluZXJfbmFtZTogbGlicmVubXMtcmVkaXMNCiAgICByZXN0YXJ0OiB1bmxlc3Mtc3RvcHBlZA0KICAgIGNvbW1hbmQ6IHJlZGlzLXNlcnZlciAtLW1heG1lbW9yeSAyNTZtYiAtLW1heG1lbW9yeS1wb2xpY3kgYWxsa2V5cy1scnUNCiAgICB2b2x1bWVzOg0KICAgICAgLSAuL2RhdGEvcmVkaXM6L2RhdGENCiAgICBuZXR3b3JrczoNCiAgICAgIC0gbGlicmVubXMtbmV0DQogICAgaGVhbHRoY2hlY2s6DQogICAgICB0ZXN0OiBbIkNNRCIsICJyZWRpcy1jbGkiLCAicGluZyJdDQogICAgICBpbnRlcnZhbDogMTVzDQogICAgICB0aW1lb3V0OiA1cw0KICAgICAgcmV0cmllczogMw0KICAgICAgc3RhcnRfcGVyaW9kOiAxMHMNCg0KbmV0d29ya3M6DQogIGxpYnJlbm1zLW5ldDoNCiAgICBkcml2ZXI6IGJyaWRnZQ0K"
 
 extract_docker_compose() {
   # Use the base64-encoded compose file embedded in the variable above
@@ -103,6 +114,30 @@ backup_file() {
   [[ -f "$1" ]] && cp -a "$1" "${1}.bak_${TIMESTAMP}" && info "Backed up $1"
 }
 
+#-------------------------- .env loading (idempotent reruns) -------------
+# Load KEY=VALUE pairs from an existing .env into the shell environment.
+# Only known keys are imported; values are not eval'd (no code execution).
+# Existing non-empty variables (CLI flags / exported env) always win.
+load_env() {
+  local env_file="$1" key val
+  [[ -f "$env_file" ]] || return 0
+  info "Loading existing environment from $env_file"
+  while IFS='=' read -r key val; do
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    key=$(echo "$key" | tr -d '[:space:]')
+    case "$key" in
+    TZ | PUID | PGID | BASE_URL | DB_NAME | DB_USER | DB_PASSWORD | DB_ROOT_PASSWORD | \
+      MEMCACHED_HOST | REDIS_HOST | POLLERS | CACHE_DRIVER | SESSION_DRIVER | \
+      ADMIN_PASS | ADMIN_EMAIL)
+      # Only import when the variable is not already set by CLI/env
+      if [[ -z "${!key:-}" ]]; then
+        export "$key=$val"
+      fi
+      ;;
+    esac
+  done <"$env_file"
+}
+
 #-------------------------- Help ----------------------------------------
 print_help() {
   cat <<'EOF'
@@ -110,6 +145,8 @@ Usage: sudo ./librenms-auto-install.sh [OPTIONS]
 
 LibreNMS Docker Compose Installer - Network monitoring with auto-discovery,
 SNMP, topology maps, traffic analysis, and alerting.
+
+NOTE: This is NOT production-hardened. See README "Caveats".
 
 Options:
   -h, --help                 Show this help
@@ -234,6 +271,12 @@ if [[ "$NON_INTERACTIVE" == false ]]; then
   fi
 fi
 
+#-------------------------- Load existing .env (idempotent reruns) ------
+# If an install already exists, reuse its credentials instead of
+# generating new ones. This keeps reruns fully idempotent: DB passwords
+# and the admin password survive reruns unless --force is used.
+load_env "$INSTALL_DIR/.env"
+
 #-------------------------- Password generation -------------------------
 DB_PASSWORD="${DB_PASSWORD:-$(gen_pass 32)}"
 DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-$(gen_pass 32)}"
@@ -284,49 +327,46 @@ else
 fi
 
 #-------------------------- Environment file (idempotent) ---------------
-if [[ -f .env && "$FORCE" == false ]]; then
-  info ".env already exists — preserving (use --force to overwrite)"
-elif [[ -f .env && "$FORCE" == true ]]; then
+ENV_CONTENT_TPL='# LibreNMS Docker Compose Environment
+# Generated by librenms-auto-install.sh on '"$(date)"'
+TZ=%s
+PUID=%s
+PGID=%s
+BASE_URL=%s
+DB_NAME=%s
+DB_USER=%s
+DB_PASSWORD=%s
+DB_ROOT_PASSWORD=%s
+MEMCACHED_HOST=%s
+REDIS_HOST=%s
+POLLERS=%s
+CACHE_DRIVER=%s
+SESSION_DRIVER=%s
+ADMIN_PASS=%s
+ADMIN_EMAIL=%s'
+
+ENV_VALUES=("$TZ" "$PUID" "$PGID" "$BASE_URL" "$DB_NAME" "$DB_USER" "$DB_PASSWORD" "$DB_ROOT_PASSWORD" "$MEMCACHED_HOST" "$REDIS_HOST" "$POLLERS" "${CACHE_DRIVER:-redis}" "${SESSION_DRIVER:-redis}" "$ADMIN_PASS" "$ADMIN_EMAIL")
+
+# Create a properly-formatted .env from the template + values
+generate_env() {
+  printf '%s\n' "$ENV_CONTENT_TPL" "${ENV_VALUES[@]}"
+}
+
+if [[ -f .env && "$FORCE" == true ]]; then
   backup_file .env
-  cat >.env <<EOF
-# LibreNMS Docker Compose Environment
-# Generated by librenms-auto-install.sh on $(date)
-TZ=${TZ}
-PUID=${PUID}
-PGID=${PGID}
-BASE_URL=${BASE_URL}
-DB_NAME=${DB_NAME}
-DB_USER=${DB_USER}
-DB_PASSWORD=${DB_PASSWORD}
-DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
-MEMCACHED_HOST=${MEMCACHED_HOST}
-REDIS_HOST=${REDIS_HOST}
-POLLERS=${POLLERS}
-SIDECAR_DISPATCHER=true
-SIDECAR_SYSLOGNG=true
-SIDECAR_SNMPTRAPD=true
-EOF
+  generate_env >.env
   chmod 600 .env
   info "Overwrote .env (--force) — chmod 600"
+elif [[ -f .env && "$FORCE" == false ]]; then
+  # Preserve existing .env; append any missing keys (e.g., ADMIN_PASS
+  # from a pre-idempotency install)
+  for key in CACHE_DRIVER SESSION_DRIVER ADMIN_PASS ADMIN_EMAIL; do
+    grep -q "^${key}=" .env 2>/dev/null || echo "${key}=${!key}" >>.env
+  done
+  chmod 600 .env
+  info ".env already exists — preserving (use --force to overwrite)"
 else
-  cat >.env <<EOF
-# LibreNMS Docker Compose Environment
-# Generated by librenms-auto-install.sh on $(date)
-TZ=${TZ}
-PUID=${PUID}
-PGID=${PGID}
-BASE_URL=${BASE_URL}
-DB_NAME=${DB_NAME}
-DB_USER=${DB_USER}
-DB_PASSWORD=${DB_PASSWORD}
-DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
-MEMCACHED_HOST=${MEMCACHED_HOST}
-REDIS_HOST=${REDIS_HOST}
-POLLERS=${POLLERS}
-SIDECAR_DISPATCHER=true
-SIDECAR_SYSLOGNG=true
-SIDECAR_SNMPTRAPD=true
-EOF
+  generate_env >.env
   chmod 600 .env
   info "Created .env (chmod 600)"
 fi
@@ -380,6 +420,26 @@ for i in $(seq 1 60); do
   fi
   sleep 2
   [[ $i -eq 60 ]] && die "Database did not become ready in time"
+done
+
+info "Waiting for Redis to be ready..."
+for i in $(seq 1 30); do
+  if $DOCKER_COMPOSE exec -T redis redis-cli ping 2>/dev/null | grep -q PONG; then
+    info "Redis is ready"
+    break
+  fi
+  sleep 2
+  [[ $i -eq 30 ]] && die "Redis did not become ready in time"
+done
+
+info "Waiting for Memcached to be ready..."
+for i in $(seq 1 30); do
+  if $DOCKER_COMPOSE exec -T memcached sh -c 'echo stats | nc 127.0.0.1 11211 | grep -q "STAT"' 2>/dev/null; then
+    info "Memcached is ready"
+    break
+  fi
+  sleep 2
+  [[ $i -eq 30 ]] && die "Memcached did not become ready in time"
 done
 
 info "Waiting for LibreNMS web UI to be ready..."
