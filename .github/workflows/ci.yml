@@ -43,30 +43,14 @@ jobs:
       - name: No :latest tags
         run: |
           if grep -q ':latest' docker-compose.yml; then
-            echo "::error::Found :latest tag in docker-compose.yml"
+            echo "::error::Found :latest tag"
             exit 1
           fi
-          echo "All images pinned"
-      - name: Sidecar services present
-        run: |
-          SERVICES=$(docker compose -f docker-compose.yml config --services)
-          for svc in dispatcher syslogng snmptrapd; do
-            if ! echo "$SERVICES" | grep -q "^${svc}$"; then
-              echo "::error::Missing sidecar: $svc"
-              exit 1
-            fi
-            echo "  $svc present"
-          done
-          echo "All sidecars present"
-      - name: All target services present
+      - name: All services present
         run: |
           SERVICES=$(docker compose -f docker-compose.yml config --services)
           for svc in db redis memcached librenms dispatcher syslogng snmptrapd; do
-            if ! echo "$SERVICES" | grep -q "^${svc}$"; then
-              echo "::error::Missing service: $svc"
-              exit 1
-            fi
-            echo "  $svc present"
+            echo "$SERVICES" | grep -q "^${svc}$" || { echo "::error::Missing: $svc"; exit 1; }
           done
 
   secret-scan:
@@ -77,100 +61,86 @@ jobs:
       - name: Scan for embedded secrets
         run: |
           FAIL=0
-          echo "=== Scanning .env.example for real secrets ==="
           if grep -qE 'DB_PASSWORD=.{8,}|DB_ROOT_PASSWORD=.{8,}' .env.example 2>/dev/null; then
-            if ! grep -q 'changeme' .env.example; then
-              echo "::error file=.env.example::Credentials look like real secrets"
-              FAIL=1
-            fi
+            grep -q 'changeme' .env.example || { echo "::error file=.env.example::Real secrets"; FAIL=1; }
           fi
-          echo "Checking embedded compose for hardcoded passwords..."
           COMPOSE=$(grep -oE 'EMBEDDED_COMPOSE_B64="[^"]*"' librenms-auto-install.sh | sed 's/EMBEDDED_COMPOSE_B64="//;s/"$//' | base64 -d 2>/dev/null || true)
-          if echo "$COMPOSE" | grep -qiE 'password\s*[=:]\s*[a-zA-Z0-9]{8,}'; then
-            echo "::error::Embedded compose contains hardcoded passwords"
-            FAIL=1
-          fi
-          echo "=== Secret scan passed ==="
+          echo "$COMPOSE" | grep -qiE 'password\s*[=:]\s*[a-zA-Z0-9]{8,}' && { echo "::error::Hardcoded passwords"; FAIL=1; } || true
           exit $FAIL
 
   e2e:
     name: E2E Docker Compose startup
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Start full stack
+      - name: Write .env and start stack
         run: |
+          set -e
           INSTALL_DIR="/opt/librenms-e2e"
           mkdir -p "$INSTALL_DIR"
           cp docker-compose.yml "$INSTALL_DIR/"
           cd "$INSTALL_DIR"
-          cat > .env << 'EENV'
-          TZ=UTC
-          PUID=1000
-          PGID=1000
-          DB_NAME=librenms
-          DB_USER=librenms
-          DB_PASSWORD=e2etestpass123
-          DB_ROOT_PASSWORD=e2etestroot123
-          MEMCACHED_HOST=memcached
-          REDIS_HOST=redis
-          CACHE_DRIVER=redis
-          SESSION_DRIVER=redis
-          BASE_URL=http://localhost
-          POLLERS=2
-          ADMIN_PASS=e2eadminpass123
-          ADMIN_EMAIL=admin@e2etest.local
-          EENV
+          # Write .env line-by-line to avoid heredoc YAML indentation issues
+          echo "TZ=UTC" > .env
+          echo "PUID=1000" >> .env
+          echo "PGID=1000" >> .env
+          echo "DB_NAME=librenms" >> .env
+          echo "DB_USER=librenms" >> .env
+          echo "DB_PASSWORD=e2etestpass123" >> .env
+          echo "DB_ROOT_PASSWORD=e2etestroot123" >> .env
+          echo "MEMCACHED_HOST=memcached" >> .env
+          echo "REDIS_HOST=redis" >> .env
+          echo "CACHE_DRIVER=redis" >> .env
+          echo "SESSION_DRIVER=redis" >> .env
+          echo "BASE_URL=http://localhost" >> .env
+          echo "POLLERS=2" >> .env
+          echo "ADMIN_PASS=e2eadminpass123" >> .env
+          echo "ADMIN_EMAIL=admin@e2etest.local" >> .env
           echo "--- .env ---"
-          cat -A .env
-          docker compose up -d
-          echo "--- services starting ---"
+          cat .env
+          echo "--- starting compose ---"
+          docker compose up -d 2>&1 || { echo "::error::docker compose up failed"; docker compose logs --tail=20; exit 1; }
+          echo "--- services ---"
           docker compose ps
       - name: Wait for all services healthy
         run: |
           cd /opt/librenms-e2e
-          echo "Waiting for all services to become healthy..."
+          echo "Waiting for services..."
           for i in $(seq 1 240); do
             HEALTHY=$(docker compose ps 2>/dev/null | grep -c "healthy" || echo "0")
-            TOTAL=$(docker compose ps 2>/dev/null | grep -cE "(Up|running)" || echo "0")
-            echo "  [$i] healthy=$HEALTHY total=$TOTAL"
-            # All 7 services should be healthy (db, redis, memcached, librenms + 3 sidecars)
-            # But sidecars depend on librenms, so wait for at least 4 core services
+            echo "  [$i] healthy=$HEALTHY/7"
             if [ "$HEALTHY" -ge 4 ]; then
               echo "Core services healthy"
               break
             fi
             sleep 5
           done
-          echo "--- final state ---"
-          docker compose ps || true
-          docker compose logs --tail=20 librenms || true
+          docker compose ps
+          docker compose logs --tail=10 librenms || true
       - name: Verify HTTP from host
         run: |
           cd /opt/librenms-e2e
-          echo "Verifying web UI from host..."
           for i in $(seq 1 10); do
-            HTTP_CODE=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:80 2>/dev/null || echo "000")
-            echo "  attempt $i: HTTP $HTTP_CODE"
-            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
-              echo "LibreNMS web UI confirmed: HTTP $HTTP_CODE"
+            HTTP=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:80 2>/dev/null || echo "000")
+            echo "  [$i] HTTP=$HTTP"
+            if [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 400 ]; then
+              echo "LibreNMS responding: HTTP $HTTP"
               exit 0
             fi
             sleep 5
           done
-          echo "::error::LibreNMS web UI not responding after retries"
-          docker compose logs --tail=50 librenms
+          echo "::error::Web UI not responding"
+          docker compose logs --tail=30 librenms
           exit 1
-      - name: Collect logs on failure
+      - name: Logs on failure
         if: failure()
         run: |
           cd /opt/librenms-e2e
-          echo "=== service status ==="
           docker compose ps || true
-          for svc in librenms db redis memcached; do
-            echo "--- $svc logs ---"
-            docker compose logs --tail=40 "$svc" || true
+          for s in librenms db redis memcached; do
+            echo "--- $s ---"
+            docker compose logs --tail=20 "$s" || true
           done
       - name: Cleanup
         if: always()
