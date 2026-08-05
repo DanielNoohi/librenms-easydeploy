@@ -102,14 +102,28 @@ jobs:
           echo "--- validate config ---"
           docker compose config --quiet 2>&1 || { echo "::error::compose config invalid"; exit 1; }
           echo "--- pull images ---"
-          docker compose pull db redis memcached librenms 2>&1 || { echo "::error::image pull failed"; exit 1; }
+          docker compose pull db redis memcached librenms 2>&1 || {
+            echo "::error::image pull failed"
+            docker compose pull db redis memcached librenms 2>&1 | tail -5
+            exit 1
+          }
           echo "--- start services ---"
           docker compose up -d --remove-orphans db redis memcached librenms 2>&1 || {
             EC=$?
             echo "::error::docker compose up failed (rc=$EC)"
-            docker compose ps 2>&1
-            docker compose logs --tail=30 db 2>&1
-            docker compose logs --tail=30 librenms 2>&1
+            # Write full error to step summary (not capped at 10 lines)
+            echo '```text' >> "$GITHUB_STEP_SUMMARY"
+            echo "docker compose up failed with rc=$EC" >> "$GITHUB_STEP_SUMMARY"
+            docker compose ps 2>&1 >> "$GITHUB_STEP_SUMMARY"
+            echo "--- db logs ---" >> "$GITHUB_STEP_SUMMARY"
+            docker compose logs --tail=30 db 2>&1 >> "$GITHUB_STEP_SUMMARY"
+            echo "--- librenms logs ---" >> "$GITHUB_STEP_SUMMARY"
+            docker compose logs --tail=30 librenms 2>&1 >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            # Also put key info in annotations
+            docker compose ps 2>&1 | head -3 | sed 's/^/::error::PS: /'
+            docker compose logs --tail=5 db 2>&1 | sed 's/^/::error::DB: /'
+            docker compose logs --tail=5 librenms 2>&1 | sed 's/^/::error::LNMS: /'
             exit 1
           }
           echo "--- services started ---"
