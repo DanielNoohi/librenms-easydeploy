@@ -99,8 +99,18 @@ jobs:
           echo "ADMIN_EMAIL=admin@e2etest.local" >> .env
           echo "--- .env ---"
           cat .env
+          echo "--- validate config ---"
+          docker compose config --quiet 2>&1 || { echo "::error::compose config invalid"; exit 1; }
           echo "--- starting compose ---"
-          docker compose up -d db redis memcached librenms 2>&1 || { echo "::error::docker compose up failed"; docker compose logs --tail=20; exit 1; }
+          docker compose up -d db redis memcached librenms 2>&1
+          COMPOSE_RC=$?
+          if [ "$COMPOSE_RC" -ne 0 ]; then
+            echo "::error::docker compose up failed (rc=$COMPOSE_RC)"
+            docker compose logs --tail=30 db 2>&1 | sed 's/^/::error::DB: /'
+            docker compose logs --tail=30 librenms 2>&1 | sed 's/^/::error::LNMS: /'
+            docker compose ps 2>&1 | sed 's/^/::error::PS: /'
+            exit 1
+          fi
           echo "--- services ---"
           docker compose ps
       - name: Wait for all services healthy
