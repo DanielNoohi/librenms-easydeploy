@@ -71,7 +71,7 @@ jobs:
   e2e:
     name: E2E Docker Compose startup
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Write .env and start stack
@@ -100,7 +100,7 @@ jobs:
           echo "--- .env ---"
           cat .env
           echo "--- starting compose ---"
-          docker compose up -d 2>&1 || { echo "::error::docker compose up failed"; docker compose logs --tail=20; exit 1; }
+          docker compose up -d db redis memcached librenms 2>&1 || { echo "::error::docker compose up failed"; docker compose logs --tail=20; exit 1; }
           echo "--- services ---"
           docker compose ps
       - name: Wait for all services healthy
