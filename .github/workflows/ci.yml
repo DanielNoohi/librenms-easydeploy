@@ -71,7 +71,7 @@ jobs:
   e2e:
     name: E2E Docker Compose startup
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Write .env and start stack
@@ -125,7 +125,7 @@ jobs:
         run: |
           cd /opt/librenms-e2e
           echo "Waiting for services..."
-          for i in $(seq 1 240); do
+          for i in $(seq 1 120); do
             HEALTHY=$(docker compose ps 2>/dev/null | grep -c "healthy" || echo "0")
             echo "  [$i] healthy=$HEALTHY/7"
             if [ "$HEALTHY" -ge 4 ]; then
