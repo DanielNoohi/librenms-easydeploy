@@ -49,24 +49,26 @@ jobs:
           echo "All images pinned"
       - name: Sidecar services present
         run: |
+          SERVICES=$(docker compose -f docker-compose.yml config --services)
           for svc in dispatcher syslogng snmptrapd; do
-            if ! docker compose -f docker-compose.yml config --services | grep -q "^${svc}$"; then
+            if ! echo "$SERVICES" | grep -q "^${svc}$"; then
               echo "::error::Missing sidecar: $svc"
               exit 1
             fi
             echo "  $svc present"
           done
           echo "All sidecars present"
-      - name: Healthchecks present
-        run: docker compose -f docker-compose.yml config --services | python3 -c "
-import sys
-svcs=set(sys.stdin.read().strip().split())
-for s in ('db','redis','memcached','librenms'):
-    if s not in svcs:
-        print(f'ERROR: {s} not in services')
-        sys.exit(1)
-print('All target services present')
-"
+      - name: Services present
+        run: |
+          SERVICES=$(docker compose -f docker-compose.yml config --services)
+          for svc in db redis memcached librenms; do
+            if ! echo "$SERVICES" | grep -q "^${svc}$"; then
+              echo "::error::Missing service: $svc"
+              exit 1
+            fi
+            echo "  $svc present"
+          done
+          echo "All target services present"
 
   secret-scan:
     name: Secret scanning (fail CI)
@@ -111,17 +113,7 @@ print('All target services present')
           cd /opt/librenms-e2e
           echo "Waiting for services..."
           for i in $(seq 1 90); do
-            RUNNING=$(docker compose ps --format json 2>/dev/null | python3 -c "
-import json,sys
-ok=0
-for line in sys.stdin:
-    try:
-        d=json.loads(line)
-        if d.get('State')=='running':
-            ok+=1
-    except: pass
-print(ok)
-" 2>/dev/null || echo "0")
+            RUNNING=$(docker compose ps --format "{{.State}}" 2>/dev/null | grep -c "^running$" || echo "0")
             echo "  $i: $RUNNING services running"
             if [ "$RUNNING" -ge 7 ]; then
               echo "All 7 services started"
@@ -146,15 +138,7 @@ print(ok)
         run: |
           cd /opt/librenms-e2e
           for svc in dispatcher syslogng snmptrapd; do
-            STATE=$(docker compose ps --format json 2>/dev/null | python3 -c "
-import json,sys
-for line in sys.stdin:
-    try:
-        d=json.loads(line)
-        if d.get('Service')=='$svc':
-            print(d.get('State','unknown'))
-    except: pass
-" 2>/dev/null || echo "unknown")
+            STATE=$(docker compose ps --service "$svc" --format "{{.State}}" 2>/dev/null || echo "unknown")
             echo "  $svc: $STATE"
             if [ "$STATE" != "running" ]; then
               echo "::error::$svc sidecar not running"
