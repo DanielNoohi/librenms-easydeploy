@@ -106,7 +106,22 @@ jobs:
           mkdir -p "$INSTALL_DIR"
           cp docker-compose.yml "$INSTALL_DIR/"
           cd "$INSTALL_DIR"
-          printf 'TZ=UTC\nPUID=1000\nPGID=1000\nDB_NAME=librenms\nDB_USER=librenms\nDB_PASSWORD=e2etestpass123\nDB_ROOT_PASSWORD=e2etestroot123\nMEMCACHED_HOST=memcached\nREDIS_HOST=redis\nCACHE_DRIVER=redis\nSESSION_DRIVER=redis\nBASE_URL=http://localhost\nPOLLERS=2\nADMIN_PASS=e2eadminpass123\nADMIN_EMAIL=admin@e2etest.local\n' > .env
+          echo "TZ=UTC" > .env
+          echo "PUID=1000" >> .env
+          echo "PGID=1000" >> .env
+          echo "DB_NAME=librenms" >> .env
+          echo "DB_USER=librenms" >> .env
+          echo "DB_PASSWORD=e2etestpass123" >> .env
+          echo "DB_ROOT_PASSWORD=e2etestroot123" >> .env
+          echo "MEMCACHED_HOST=memcached" >> .env
+          echo "REDIS_HOST=redis" >> .env
+          echo "CACHE_DRIVER=redis" >> .env
+          echo "SESSION_DRIVER=redis" >> .env
+          echo "BASE_URL=http://localhost" >> .env
+          echo "POLLERS=2" >> .env
+          echo "ADMIN_PASS=e2eadminpass123" >> .env
+          echo "ADMIN_EMAIL=admin@e2etest.local" >> .env
+          cat .env
           docker compose up -d
       - name: Wait for services
         run: |
