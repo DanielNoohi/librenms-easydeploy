@@ -58,17 +58,16 @@ jobs:
             echo "  $svc present"
           done
           echo "All sidecars present"
-      - name: Services present
+      - name: All target services present
         run: |
           SERVICES=$(docker compose -f docker-compose.yml config --services)
-          for svc in db redis memcached librenms; do
+          for svc in db redis memcached librenms dispatcher syslogng snmptrapd; do
             if ! echo "$SERVICES" | grep -q "^${svc}$"; then
               echo "::error::Missing service: $svc"
               exit 1
             fi
             echo "  $svc present"
           done
-          echo "All target services present"
 
   secret-scan:
     name: Secret scanning (fail CI)
@@ -78,20 +77,20 @@ jobs:
       - name: Scan for embedded secrets
         run: |
           FAIL=0
-          echo "=== Scanning for real secrets ==="
+          echo "=== Scanning .env.example for real secrets ==="
           if grep -qE 'DB_PASSWORD=.{8,}|DB_ROOT_PASSWORD=.{8,}' .env.example 2>/dev/null; then
             if ! grep -q 'changeme' .env.example; then
               echo "::error file=.env.example::Credentials look like real secrets"
               FAIL=1
             fi
           fi
-          echo "Checking embedded compose for plaintext secrets..."
+          echo "Checking embedded compose for hardcoded passwords..."
           COMPOSE=$(grep -oE 'EMBEDDED_COMPOSE_B64="[^"]*"' librenms-auto-install.sh | sed 's/EMBEDDED_COMPOSE_B64="//;s/"$//' | base64 -d 2>/dev/null || true)
           if echo "$COMPOSE" | grep -qiE 'password\s*[=:]\s*[a-zA-Z0-9]{8,}'; then
             echo "::error::Embedded compose contains hardcoded passwords"
             FAIL=1
           fi
-          echo "=== Secret scan complete ==="
+          echo "=== Secret scan passed ==="
           exit $FAIL
 
   e2e:
@@ -100,80 +99,94 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Start full stack
+      - name: Write .env and start stack
         run: |
           INSTALL_DIR="/opt/librenms-e2e"
           mkdir -p "$INSTALL_DIR"
           cp docker-compose.yml "$INSTALL_DIR/"
           cd "$INSTALL_DIR"
-          echo "TZ=UTC" > .env
-          echo "PUID=1000" >> .env
-          echo "PGID=1000" >> .env
-          echo "DB_NAME=librenms" >> .env
-          echo "DB_USER=librenms" >> .env
-          echo "DB_PASSWORD=e2etestpass123" >> .env
-          echo "DB_ROOT_PASSWORD=e2etestroot123" >> .env
-          echo "MEMCACHED_HOST=memcached" >> .env
-          echo "REDIS_HOST=redis" >> .env
-          echo "CACHE_DRIVER=redis" >> .env
-          echo "SESSION_DRIVER=redis" >> .env
-          echo "BASE_URL=http://localhost" >> .env
-          echo "POLLERS=2" >> .env
-          echo "ADMIN_PASS=e2eadminpass123" >> .env
-          echo "ADMIN_EMAIL=admin@e2etest.local" >> .env
-          echo "=== .env contents ==="
+          cat > .env << 'EENV'
+          TZ=UTC
+          PUID=1000
+          PGID=1000
+          DB_NAME=librenms
+          DB_USER=librenms
+          DB_PASSWORD=e2etestpass123
+          DB_ROOT_PASSWORD=e2etestroot123
+          MEMCACHED_HOST=memcached
+          REDIS_HOST=redis
+          CACHE_DRIVER=redis
+          SESSION_DRIVER=redis
+          BASE_URL=http://localhost
+          POLLERS=2
+          ADMIN_PASS=e2eadminpass123
+          ADMIN_EMAIL=admin@e2etest.local
+          EENV
+          echo "--- .env ---"
           cat -A .env
-          echo "=== docker compose config ==="
-          docker compose config --quiet
-          echo "=== docker compose up ==="
-          set -x
-          if ! docker compose up -d db redis memcached librenms 2>&1 | tee /tmp/compose-up.log; then
-            echo "::error::docker compose up failed"
-            cat /tmp/compose-up.log
-            cat .env
-            exit 1
-          fi
-          set +x
+          docker compose up -d db redis memcached
+          echo "--- services starting ---"
           docker compose ps
-      - name: Wait for services
+      - name: Wait for DB + cache healthy
         run: |
-          set -x
           cd /opt/librenms-e2e
-          echo "=== .env contents ==="
-          cat .env
-          echo "=== docker compose config ==="
-          docker compose config --quiet || true
-          echo "=== Waiting for services ==="
-          for i in $(seq 1 60); do
-            RUNNING=$(docker compose ps 2>/dev/null | grep -c "running" || echo "0")
-            echo "  $i: $RUNNING services running"
-            if [ "$RUNNING" -ge 4 ]; then
-              echo "All 4 core services started"
+          echo "Waiting for db, redis, memcached..."
+          for i in $(seq 1 120); do
+            DB_OK=$(docker compose exec -T db mysqladmin ping -h localhost -u root -pe2etestroot123 --silent 2>/dev/null && echo "ok" || echo "wait")
+            REDIS_OK=$(docker compose exec -T redis redis-cli ping 2>/dev/null | grep -q PONG && echo "ok" || echo "wait")
+            MEM_OK=$(docker compose exec -T memcached sh -c "echo version | nc localhost 11211" 2>/dev/null | head -1 || echo "wait")
+            echo "  [$i] db=$DB_OK redis=$REDIS_OK memcached=$MEM_OK"
+            if [ "$DB_OK" = "ok" ] && [ "$REDIS_OK" = "ok" ] && [ "$MEM_OK" != "wait" ]; then
+              echo "All backing services ready"
+              break
+            fi
+            sleep 3
+          done
+          docker compose ps
+      - name: Start librenms and wait for health
+        run: |
+          cd /opt/librenms-e2e
+          echo "Starting librenms..."
+          docker compose up -d librenms
+          echo "Waiting for librenms to become healthy (may take 2-3min for DB init)..."
+          for i in $(seq 1 120); do
+            HTTP=$(docker compose exec -T librenms curl -sf -o /dev/null -w '%{http_code}' http://localhost:8000 2>/dev/null || echo "000")
+            echo "  [$i] HTTP=$HTTP"
+            if [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 500 ]; then
+              echo "LibreNMS web UI responding!"
               break
             fi
             sleep 5
           done
-          echo "=== Final state ==="
-          docker compose ps || true
-          docker compose logs --tail=30 db || true
-          docker compose logs --tail=30 librenms || true
-      - name: Verify web UI
+          echo "--- final state ---"
+          docker compose ps
+      - name: Verify HTTP response
         run: |
           cd /opt/librenms-e2e
-          echo "Waiting 30s for LibreNMS to fully boot..."
-          sleep 30
-          for i in $(seq 1 10); do
-            HTTP_CODE=$(docker compose exec -T librenms curl -sf -o /dev/null -w '%{http_code}' http://localhost:8000 2>/dev/null || echo "000")
-            echo "  Attempt $i: HTTP $HTTP_CODE"
-            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 500 ]; then
-              echo "LibreNMS web UI responding: HTTP $HTTP_CODE"
+          echo "Checking web UI..."
+          # Verify from host side (compose maps 80:8000)
+          for i in $(seq 1 5); do
+            HTTP_CODE=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:80 2>/dev/null || echo "000")
+            echo "  attempt $i: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+              echo "LibreNMS web UI confirmed responding: HTTP $HTTP_CODE"
               exit 0
             fi
-            sleep 10
+            sleep 5
           done
-          echo "::error::LibreNMS web UI not responding after retries"
-          docker compose logs --tail=50 librenms || true
+          echo "::error::LibreNMS web UI not responding (HTTP $HTTP_CODE)"
+          docker compose logs --tail=50 librenms
           exit 1
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          cd /opt/librenms-e2e
+          echo "=== service status ==="
+          docker compose ps
+          for svc in librenms db redis memcached; do
+            echo "--- $svc logs ---"
+            docker compose logs --tail=40 "$svc" || true
+          done
       - name: Cleanup
         if: always()
         run: cd /opt/librenms-e2e && docker compose down -v --remove-orphans 2>/dev/null || true
