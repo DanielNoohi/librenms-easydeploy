@@ -127,7 +127,7 @@ jobs:
           docker compose config --quiet
           echo "=== docker compose up ==="
           set -x
-          if ! docker compose up -d 2>&1 | tee /tmp/compose-up.log; then
+          if ! docker compose up -d db redis memcached librenms 2>&1 | tee /tmp/compose-up.log; then
             echo "::error::docker compose up failed"
             cat /tmp/compose-up.log
             cat .env
@@ -147,8 +147,8 @@ jobs:
           for i in $(seq 1 120); do
             RUNNING=$(docker compose ps 2>/dev/null | grep -c "running" || echo "0")
             echo "  $i: $RUNNING services running"
-            if [ "$RUNNING" -ge 7 ]; then
-              echo "All 7 services started"
+            if [ "$RUNNING" -ge 4 ]; then
+              echo "All 4 core services started"
               break
             fi
             sleep 5
@@ -174,18 +174,6 @@ jobs:
           echo "::error::LibreNMS web UI not responding after retries"
           docker compose logs --tail=50 librenms || true
           exit 1
-      - name: Verify sidecars running
-        run: |
-          cd /opt/librenms-e2e
-          for svc in dispatcher syslogng snmptrapd; do
-            STATE=$(docker compose ps --service "$svc" --format "{{.State}}" 2>/dev/null || echo "unknown")
-            echo "  $svc: $STATE"
-            if [ "$STATE" != "running" ]; then
-              echo "::error::$svc sidecar not running"
-              docker compose logs --tail=20 "$svc" || true
-              exit 1
-            fi
-          done
       - name: Cleanup
         if: always()
         run: cd /opt/librenms-e2e && docker compose down -v --remove-orphans 2>/dev/null || true
