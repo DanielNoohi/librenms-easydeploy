@@ -127,7 +127,12 @@ jobs:
           docker compose config --quiet
           echo "=== docker compose up ==="
           set -x
-          docker compose up -d
+          if ! docker compose up -d 2>&1 | tee /tmp/compose-up.log; then
+            echo "::error::docker compose up failed"
+            cat /tmp/compose-up.log
+            cat .env
+            exit 1
+          fi
           set +x
           docker compose ps
       - name: Wait for services
