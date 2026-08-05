@@ -125,7 +125,7 @@ jobs:
         run: |
           cd /opt/librenms-e2e
           echo "Waiting for services..."
-          for i in $(seq 1 120); do
+          for i in $(seq 1 300); do
             HEALTHY=$(docker compose ps 2>/dev/null | grep -c "healthy" || echo "0")
             echo "  [$i] healthy=$HEALTHY/7"
             if [ "$HEALTHY" -ge 4 ]; then
@@ -140,7 +140,7 @@ jobs:
         run: |
           cd /opt/librenms-e2e
           for i in $(seq 1 10); do
-            HTTP=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:80 2>/dev/null || echo "000")
+            HTTP=$(curl -fL -o /dev/null -w '%{http_code}' http://localhost:80 2>/dev/null || echo "000")
             echo "  [$i] HTTP=$HTTP"
             if [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 400 ]; then
               echo "LibreNMS responding: HTTP $HTTP"
