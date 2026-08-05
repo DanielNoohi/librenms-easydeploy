@@ -125,8 +125,13 @@ jobs:
           docker compose up -d
       - name: Wait for services
         run: |
+          set -x
           cd /opt/librenms-e2e
-          echo "Waiting for services..."
+          echo "=== .env contents ==="
+          cat .env
+          echo "=== docker compose config ==="
+          docker compose config --quiet || true
+          echo "=== Waiting for services ==="
           for i in $(seq 1 90); do
             RUNNING=$(docker compose ps --format "{{.State}}" 2>/dev/null | grep -c "^running$" || echo "0")
             echo "  $i: $RUNNING services running"
@@ -136,7 +141,10 @@ jobs:
             fi
             sleep 5
           done
-          docker compose ps
+          echo "=== Final state ==="
+          docker compose ps || true
+          docker compose logs --tail=20 db || true
+          docker compose logs --tail=20 librenms || true
       - name: Verify web UI
         run: |
           cd /opt/librenms-e2e
