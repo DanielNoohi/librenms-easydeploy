@@ -1,7 +1,7 @@
 services:
   # LibreNMS web application + alerting
   librenms:
-    image: librenms/librenms:25.4.1
+    image: librenms/librenms:26.7.0
     container_name: librenms
     hostname: librenms
     cap_add:
@@ -49,7 +49,7 @@ services:
 
   # Distributed poller (official sidecar — SIDECAR_DISPATCHER=1)
   dispatcher:
-    image: librenms/librenms:25.4.1
+    image: librenms/librenms:26.7.0
     container_name: librenms-dispatcher
     hostname: librenms-dispatcher
     cap_add:
@@ -81,7 +81,7 @@ services:
 
   # Syslog-ng sidecar (official — SIDECAR_SYSLOGNG=1, UDP 514)
   syslogng:
-    image: librenms/librenms:25.4.1
+    image: librenms/librenms:26.7.0
     container_name: librenms-syslogng
     hostname: librenms-syslogng
     cap_add:
@@ -115,7 +115,7 @@ services:
 
   # SNMP trap receiver (official — SIDECAR_SNMPTRAPD=1, UDP 162)
   snmptrapd:
-    image: librenms/librenms:25.4.1
+    image: librenms/librenms:26.7.0
     container_name: librenms-snmptrapd
     hostname: librenms-snmptrapd
     cap_add:
