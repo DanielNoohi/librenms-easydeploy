@@ -97,7 +97,7 @@ jobs:
   e2e:
     name: E2E Docker Compose startup
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Start full stack
@@ -144,7 +144,7 @@ jobs:
           echo "=== docker compose config ==="
           docker compose config --quiet || true
           echo "=== Waiting for services ==="
-          for i in $(seq 1 120); do
+          for i in $(seq 1 60); do
             RUNNING=$(docker compose ps 2>/dev/null | grep -c "running" || echo "0")
             echo "  $i: $RUNNING services running"
             if [ "$RUNNING" -ge 4 ]; then
