@@ -99,7 +99,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Write .env and start stack
+      - name: Start full stack
         run: |
           INSTALL_DIR="/opt/librenms-e2e"
           mkdir -p "$INSTALL_DIR"
@@ -124,57 +124,42 @@ jobs:
           EENV
           echo "--- .env ---"
           cat -A .env
-          docker compose up -d db redis memcached
+          docker compose up -d
           echo "--- services starting ---"
           docker compose ps
-      - name: Wait for DB + cache healthy
+      - name: Wait for all services healthy
         run: |
           cd /opt/librenms-e2e
-          echo "Waiting for db, redis, memcached..."
-          for i in $(seq 1 120); do
-            DB_OK=$(docker compose exec -T db mysqladmin ping -h localhost -u root -pe2etestroot123 --silent 2>/dev/null && echo "ok" || echo "wait")
-            REDIS_OK=$(docker compose exec -T redis redis-cli ping 2>/dev/null | grep -q PONG && echo "ok" || echo "wait")
-            MEM_OK=$(docker compose exec -T memcached sh -c "echo version | nc localhost 11211" 2>/dev/null | head -1 || echo "wait")
-            echo "  [$i] db=$DB_OK redis=$REDIS_OK memcached=$MEM_OK"
-            if [ "$DB_OK" = "ok" ] && [ "$REDIS_OK" = "ok" ] && [ "$MEM_OK" != "wait" ]; then
-              echo "All backing services ready"
-              break
-            fi
-            sleep 3
-          done
-          docker compose ps
-      - name: Start librenms and wait for health
-        run: |
-          cd /opt/librenms-e2e
-          echo "Starting librenms..."
-          docker compose up -d librenms
-          echo "Waiting for librenms to become healthy (may take 2-3min for DB init)..."
-          for i in $(seq 1 120); do
-            HTTP=$(docker compose exec -T librenms curl -sf -o /dev/null -w '%{http_code}' http://localhost:8000 2>/dev/null || echo "000")
-            echo "  [$i] HTTP=$HTTP"
-            if [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 500 ]; then
-              echo "LibreNMS web UI responding!"
+          echo "Waiting for all services to become healthy..."
+          for i in $(seq 1 240); do
+            HEALTHY=$(docker compose ps 2>/dev/null | grep -c "healthy" || echo "0")
+            TOTAL=$(docker compose ps 2>/dev/null | grep -cE "(Up|running)" || echo "0")
+            echo "  [$i] healthy=$HEALTHY total=$TOTAL"
+            # All 7 services should be healthy (db, redis, memcached, librenms + 3 sidecars)
+            # But sidecars depend on librenms, so wait for at least 4 core services
+            if [ "$HEALTHY" -ge 4 ]; then
+              echo "Core services healthy"
               break
             fi
             sleep 5
           done
           echo "--- final state ---"
-          docker compose ps
-      - name: Verify HTTP response
+          docker compose ps || true
+          docker compose logs --tail=20 librenms || true
+      - name: Verify HTTP from host
         run: |
           cd /opt/librenms-e2e
-          echo "Checking web UI..."
-          # Verify from host side (compose maps 80:8000)
-          for i in $(seq 1 5); do
+          echo "Verifying web UI from host..."
+          for i in $(seq 1 10); do
             HTTP_CODE=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:80 2>/dev/null || echo "000")
             echo "  attempt $i: HTTP $HTTP_CODE"
             if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
-              echo "LibreNMS web UI confirmed responding: HTTP $HTTP_CODE"
+              echo "LibreNMS web UI confirmed: HTTP $HTTP_CODE"
               exit 0
             fi
             sleep 5
           done
-          echo "::error::LibreNMS web UI not responding (HTTP $HTTP_CODE)"
+          echo "::error::LibreNMS web UI not responding after retries"
           docker compose logs --tail=50 librenms
           exit 1
       - name: Collect logs on failure
@@ -182,7 +167,7 @@ jobs:
         run: |
           cd /opt/librenms-e2e
           echo "=== service status ==="
-          docker compose ps
+          docker compose ps || true
           for svc in librenms db redis memcached; do
             echo "--- $svc logs ---"
             docker compose logs --tail=40 "$svc" || true
