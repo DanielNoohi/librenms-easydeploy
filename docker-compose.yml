@@ -185,7 +185,7 @@ services:
     networks:
       - librenms-net
     healthcheck:
-      test: ["CMD", "memcached-tool", "127.0.0.1", "stats"]
+      test: ["CMD-SHELL", "echo version | nc 127.0.0.1 11211 | grep -q VERSION"]
       interval: 15s
       timeout: 5s
       retries: 3
