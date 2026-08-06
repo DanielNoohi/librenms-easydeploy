@@ -113,18 +113,19 @@ services:
     volumes:
       - ./data/db:/var/lib/mysql
     command:
+      - mysqld
       - --innodb-file-per-table=1
       - --lower-case-table-names=0
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --max-allowed-packet=64M
-      - --innodb-buffer-pool-size=256M
+      - --innodb-buffer-pool-size=128M
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 12
-      start_period: 30s
+      retries: 36
+      start_period: 60s
     networks:
       - librenms-net
     logging:

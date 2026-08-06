@@ -225,12 +225,14 @@ jobs:
       - name: Logs on failure
         if: failure()
         run: |
+          set +e
           cd /opt/librenms-e2e
-          docker compose ps || true
+          # .env is root:600 from the installer; Compose needs it (or sudo).
+          sudo docker compose ps || true
           for s in librenms db redis dispatcher syslogng snmptrapd; do
             echo "--- $s ---"
-            docker compose logs --tail=80 "$s" || true
+            sudo docker compose logs --tail=120 "$s" || true
           done
       - name: Cleanup
         if: always()
-        run: cd /opt/librenms-e2e && docker compose down -v --remove-orphans 2>/dev/null || true
+        run: cd /opt/librenms-e2e && sudo docker compose down -v --remove-orphans 2>/dev/null || true
