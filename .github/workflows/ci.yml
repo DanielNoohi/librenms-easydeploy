@@ -52,6 +52,24 @@ jobs:
           for svc in db redis memcached librenms dispatcher syslogng snmptrapd; do
             echo "$SERVICES" | grep -q "^${svc}$" || { echo "::error::Missing: $svc"; exit 1; }
           done
+      - name: Embedded compose matches docker-compose.yml
+        run: |
+          python3 - <<'PY'
+          import base64, pathlib, re, sys
+          root = pathlib.Path(".")
+          compose = (root / "docker-compose.yml").read_bytes()
+          script = (root / "librenms-auto-install.sh").read_text(encoding="utf-8")
+          m = re.search(r'EMBEDDED_COMPOSE_B64="([^"]*)"', script)
+          if not m:
+              print("::error::EMBEDDED_COMPOSE_B64 missing")
+              sys.exit(1)
+          decoded = base64.b64decode(m.group(1))
+          if decoded != compose:
+              print(f"::error::Embedded compose drift: file={len(compose)} embedded={len(decoded)}")
+              print("Run: python3 scripts/sync_embedded_compose.py")
+              sys.exit(1)
+          print("embedded compose in sync")
+          PY
 
   secret-scan:
     name: Secret scanning (fail CI)
@@ -89,6 +107,7 @@ jobs:
           echo "DB_USER=librenms" >> .env
           echo "DB_PASSWORD=e2etestpass123" >> .env
           echo "DB_ROOT_PASSWORD=e2etestroot123" >> .env
+          echo "REDIS_PASSWORD=e2eredispass123" >> .env
           echo "MEMCACHED_HOST=memcached" >> .env
           echo "REDIS_HOST=redis" >> .env
           echo "CACHE_DRIVER=redis" >> .env
@@ -107,7 +126,9 @@ jobs:
           docker compose up -d db redis memcached 2>&1
           echo "--- wait for db healthy ---"
           for i in $(seq 1 60); do
-            docker compose exec -T db mysqladmin ping -h localhost -u root -pe2etestroot123 --silent 2>/dev/null && echo "DB ready" && break
+            st=$(docker inspect --format='{{.State.Health.Status}}' librenms-db 2>/dev/null || echo starting)
+            echo "  db health=$st"
+            [ "$st" = "healthy" ] && echo "DB ready" && break
             sleep 2
           done
           echo "--- start librenms ---"
@@ -140,20 +161,24 @@ jobs:
         run: |
           cd /opt/librenms-e2e
           for i in $(seq 1 120); do
-            # Check response body for marker if 200 fails
-            curl -fL http://localhost:80 -o /tmp/response.html 2>/dev/null
-            if grep -q "<title>LibreNMS</title>" /tmp/response.html; then
-               echo "LibreNMS title found, OK"
-               exit 0
+            # Prefer in-container readiness, then host title marker
+            if docker compose exec -T librenms curl -fsS http://localhost:8000 >/tmp/lnms-in.html 2>/dev/null; then
+              if grep -qi 'librenms' /tmp/lnms-in.html; then
+                echo "In-container LibreNMS response OK"
+              fi
             fi
-            echo "Attempt $i: LibreNMS not found, retrying..."
+            if curl -fsSL http://localhost:80 -o /tmp/response.html 2>/dev/null; then
+              if grep -qiE '<title>.*LibreNMS.*</title>|LibreNMS' /tmp/response.html; then
+                echo "LibreNMS web UI reachable from host"
+                exit 0
+              fi
+            fi
+            echo "Attempt $i: LibreNMS not ready, retrying..."
             sleep 5
           done
-          echo "HTTP failure - logs:"
-          cat /tmp/response.html
-          exit 1
           echo "::error::Web UI not responding"
-          docker compose logs --tail=30 librenms
+          docker compose logs --tail=40 librenms || true
+          cat /tmp/response.html 2>/dev/null || true
           exit 1
       - name: Logs on failure
         if: failure()

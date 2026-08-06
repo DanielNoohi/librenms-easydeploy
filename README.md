@@ -1,29 +1,39 @@
 # LibreNMS EasyDeploy
 
-**Docker Compose deployment for LibreNMS** — a network monitoring platform with auto-discovery, SNMP, topology maps, traffic analysis, and alerting. Complements Zabbix (server/app metrics) and Lansweeper (endpoint inventory) by focusing on **network-centric visibility**.
+**Docker Compose deployment for LibreNMS** — network monitoring with auto-discovery, SNMP, topology maps, traffic analysis, and alerting. Aimed at labs, homelabs, and small single-node installs. Complements Zabbix (server/app metrics) and Lansweeper (endpoint inventory) with **network-centric visibility**.
 
 ---
 
 ## Caveats
 
-- **HTTP only, no HTTPS.** The container exposes port 80 internally on 8000. For HTTPS, place a reverse proxy (nginx, Caddy, Traefik) in front.
-- **Not production-hardened.** This is a single-node Docker Compose stack intended for labs, homelabs, and small deployments. For production, add monitoring backups, and a proper backup strategy.
-- **Licensed under GPL-3.0.** LibreNMS itself is GPL-3.0; any scripts and config files in this repository are also GPL-3.0.
+- **HTTP only, no HTTPS.** Port `80` on the host maps to container `8000`. For HTTPS, put a reverse proxy (nginx, Caddy, Traefik) in front — this installer does **not** configure Let's Encrypt.
+- **Not production-hardened.** Single-node Compose for labs/homelabs/small sites. For production, add TLS, backups, monitoring of the monitor, and harden Docker/UFW properly.
+- **Licensed under GPL-3.0.** LibreNMS itself is GPL-3.0; scripts and config in this repo are also GPL-3.0.
 
 ---
 
 ## Quick Install
 
-```bash
-curl -sSL https://raw.githubusercontent.com/DanielNoohi/librenms-easydeploy/main/librenms-auto-install.sh | sudo bash
-```
-
-Or download and run:
+Prefer download-then-run (review the script before `sudo`):
 
 ```bash
 wget https://raw.githubusercontent.com/DanielNoohi/librenms-easydeploy/main/librenms-auto-install.sh
 chmod +x librenms-auto-install.sh
 sudo ./librenms-auto-install.sh
+```
+
+Or clone the repo (keeps `docker-compose.yml` next to the installer):
+
+```bash
+git clone https://github.com/DanielNoohi/librenms-easydeploy.git
+cd librenms-easydeploy
+sudo ./librenms-auto-install.sh
+```
+
+One-liner (less reviewable):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/DanielNoohi/librenms-easydeploy/main/librenms-auto-install.sh | sudo bash
 ```
 
 ---
@@ -45,11 +55,13 @@ sudo ./librenms-auto-install.sh \
   --save-creds ~/librenms-creds.txt
 ```
 
-### Skip SSL (external reverse proxy)
+### Behind an external reverse proxy
 
 ```bash
 sudo ./librenms-auto-install.sh -n -u http://192.168.1.50 --no-ssl -s creds.txt
 ```
+
+(`--no-ssl` is accepted for compatibility; the stack is always HTTP-only.)
 
 ### Dry run (preview)
 
@@ -63,18 +75,18 @@ sudo ./librenms-auto-install.sh --dry-run -n -u http://librenms.example.com
 
 | Flag | Long | Description |
 |------|------|-------------|
-| `-h` | `--help` | Show this help |
+| `-h` | `--help` | Show help |
 | `-d` | `--dir` | Install directory (default: `/opt/librenms-easydeploy`) |
 | `-u` | `--url` | Base URL (required for non-interactive) |
 | `-t` | `--timezone` | Timezone (default: `UTC`) |
 | `-p` | `--pollers` | Poller processes (1–64, default: `16`) |
 | `-s` | `--save-creds` | Save credentials to `chmod 600` file |
 | `-n` | `--non-interactive` | No prompts (requires `--url`) |
-| `-f` | `--force` | Skip pre-flight checks |
+| `-f` | `--force` | Overwrite existing `.env` (backs up first; regenerates secrets) |
 | `-D` | `--dry-run` | Preview without executing |
 | | `--no-firewall` | Skip UFW rules |
-| | `--no-ssl` | Skip SSL (use external proxy) |
-| | `--le-email` | Email for Let's Encrypt (reverse proxy setup) |
+| | `--no-ssl` | Compatibility flag; stack remains HTTP-only |
+| | `--emit-env` | Write generated `.env` to a file and exit (no Docker/root; for tests) |
 | | `--db-name` | Database name (default: `librenms`) |
 | | `--db-user` | Database user (default: `librenms`) |
 
@@ -82,20 +94,20 @@ sudo ./librenms-auto-install.sh --dry-run -n -u http://librenms.example.com
 
 ## Security
 
-- Strong 32-char passwords for DB root, DB user, and admin user
-- Credentials never on command line — passed via `.env` (`chmod 600`)
-- Non-root containers (PUID/PGID 1000)
-- UFW firewall rules added by the installer:
+- Strong random passwords for DB root, DB user, Redis, and admin
+- Credentials in `.env` with `chmod 600` (not passed on the installer argv for wait loops where avoidable)
+- Redis requires a password on the internal Docker network
+- MariaDB healthcheck uses the image `healthcheck.sh` (no password on process argv)
+- Non-root app containers (PUID/PGID 1000)
+- UFW rules added by the installer (unless `--no-firewall`):
   - `80/tcp` — LibreNMS web UI (HTTP)
-  - `161/udp` — SNMP (device polling from this host)
   - `162/udp` — SNMP traps (snmptrapd sidecar)
   - `514/udp` — Syslog ingestion (syslogng sidecar)
-- Reruns are idempotent: existing `.env` credentials (DB and admin) are
-  loaded and reused; nothing is regenerated or overwritten without `--force`
-- No interference with existing Zabbix (ports 10050/10051) or Lansweeper
-- Data persistence — all data in `./data/` survives container updates
-- Pinned Docker images — no `:latest` tags
-- Health checks on all services (db, redis, memcached, librenms)
+  - SNMP **polling** is outbound; no inbound `161/udp` rule is opened
+- Reruns are idempotent: existing `.env` credentials are reused unless `--force`
+- Data under `./data/` survives container updates
+- Pinned LibreNMS image tag — no `:latest`
+- Health checks on db, redis, memcached, and librenms
 
 ---
 
@@ -105,7 +117,7 @@ sudo ./librenms-auto-install.sh --dry-run -n -u http://librenms.example.com
 - Docker Engine + Docker Compose v2
 - Root/sudo access
 - 4 GB RAM minimum (8 GB recommended for >500 devices)
-- Ports 80/tcp, 161/udp, 162/udp, 514/udp available
+- Ports `80/tcp`, `162/udp`, `514/udp` available on the host
 
 ---
 
@@ -116,31 +128,25 @@ The installer adds UFW rules automatically (unless `--no-firewall`):
 | Port | Protocol | Purpose |
 |------|----------|---------|
 | 80   | TCP      | LibreNMS web UI |
-| 161  | UDP      | SNMP polling (outbound from this host) |
 | 162  | UDP      | SNMP trap receiver (snmptrapd sidecar) |
 | 514  | UDP      | Syslog receiver (syslogng sidecar) |
 
-It does **not** run `ufw enable` — you must enable the firewall yourself:
+It does **not** run `ufw enable` — enable it yourself:
 
 ```bash
 sudo ufw enable
 ```
 
-> **Note:** The installer's UFW rules only protect the host. Docker
-> publishes container ports (`80/tcp`, `162/udp`, `514/udp`) through
-> iptables, which **bypasses UFW**. If you need to restrict access to
-> these ports, configure them in the `DOCKER-USER` chain instead:
+> **Note:** UFW rules only protect the host. Docker publishes container ports through
+> iptables, which **bypasses UFW**. Restrict access with the `DOCKER-USER` chain if needed:
 >
 > ```bash
-> # Example: block all except your management subnet (10.0.0.0/8)
 > sudo iptables -I DOCKER-USER -p tcp --dport 80 ! -s 10.0.0.0/8 -j DROP
 > sudo iptables -I DOCKER-USER -p udp --dport 162 ! -s 10.0.0.0/8 -j DROP
 > sudo iptables -I DOCKER-USER -p udp --dport 514 ! -s 10.0.0.0/8 -j DROP
 > ```
 >
-> See the Docker documentation on
-> [Docker and UFW](https://docs.docker.com/network/packet-filtering-firewalls/)
-> for details.
+> See [Docker and UFW](https://docs.docker.com/network/packet-filtering-firewalls/).
 
 ---
 
@@ -160,20 +166,15 @@ sudo ufw enable
 ```
 
 **Services:**
-- **librenms** — Main web UI, alerting (port 80 → 8000)
-- **dispatcher** — Distributed poller (sidecar, `SIDECAR_DISPATCHER=1`)
-- **syslogng** — Syslog ingestion (sidecar, `SIDECAR_SYSLOGNG=1`, UDP 514)
-- **snmptrapd** — SNMP trap receiver (sidecar, `SIDECAR_SNMPTRAPD=1`, UDP 162)
+- **librenms** — Main web UI, alerting (host `80` → `8000`)
+- **dispatcher** — Distributed poller (`SIDECAR_DISPATCHER=1`)
+- **syslogng** — Syslog ingestion (`SIDECAR_SYSLOGNG=1`, UDP 514)
+- **snmptrapd** — SNMP trap receiver (`SIDECAR_SNMPTRAPD=1`, UDP 162)
 - **db** — MariaDB 10.11
 - **memcached** — Cache backend
-- **redis** — Cache/queue backend
+- **redis** — Cache/queue backend (password required)
 
-The dispatcher, syslogng, and snmptrapd sidecars follow the
-[official LibreNMS Docker design](https://github.com/librenms/docker):
-each is a separate container running the same image with the matching
-`SIDECAR_*` flag set to `1` (not the main container). This keeps
-polling, syslog, and trap ingestion isolated and independently
-restartable.
+Sidecars follow the [official LibreNMS Docker design](https://github.com/librenms/docker).
 
 **Volumes:**
 - `./data/librenms` — LibreNMS data, configs, RRD files
@@ -194,14 +195,14 @@ cd /opt/librenms-easydeploy
 docker compose pull
 docker compose up -d
 docker compose exec librenms php artisan migrate --force
-docker compose exec librenms php artisan librenms:snmp-scan --force
 ```
 
 ### Backup
 
 ```bash
 cd /opt/librenms-easydeploy
-docker compose exec db mysqldump -u root -p"$DB_ROOT_PASSWORD" librenms > backup_$(date +%F).sql
+set -a; source .env; set +a
+docker compose exec -T -e MYSQL_PWD="$DB_ROOT_PASSWORD" db mysqldump -u root librenms > backup_$(date +%F).sql
 tar -czf librenms_data_$(date +%F).tar.gz data/
 ```
 
@@ -219,15 +220,20 @@ rm -rf /opt/librenms-easydeploy
 
 ```
 librenms-easydeploy/
-├── docker-compose.yml          # Service definitions (pinned images, healthchecks)
-├── librenms-auto-install.sh    # Installer
-├── test/
-│   └── test_args.bats          # Bats argument tests
-├── .github/
-│   └── workflows/ci.yml        # GitHub Actions (ShellCheck, shfmt, Bats, Compose, security)
-├── .gitignore
+├── docker-compose.yml              # Services (pinned LibreNMS tag, healthchecks)
+├── librenms-auto-install.sh        # Installer (+ embedded compose for curl|bash)
+├── scripts/sync_embedded_compose.py
+├── test/test_args.bats             # CLI + .env generation + embed drift tests
+├── .github/workflows/ci.yml
+├── .env.example
 ├── LICENSE
 └── README.md
+```
+
+After changing `docker-compose.yml`, sync the installer blob:
+
+```bash
+python3 scripts/sync_embedded_compose.py
 ```
 
 ---
@@ -238,15 +244,16 @@ librenms-easydeploy/
 sudo apt-get install -y bats shellcheck shfmt
 bats test/
 shellcheck librenms-auto-install.sh
-shfmt -d librenms-auto-install.sh
+shfmt -d -i 2 librenms-auto-install.sh
+docker compose -f docker-compose.yml config --quiet
 ```
 
-CI runs automatically on push/PR:
-- ShellCheck — static analysis
-- shfmt — formatting validation
-- Bats — argument parsing tests
-- Docker Compose — config validation, no `:latest` tags
+CI on push/PR:
+- ShellCheck + shfmt
+- Bats (args, `.env` emit, embedded compose drift)
+- Compose validation, no `:latest`, service list, embed sync
 - Secret scanning
+- E2E Compose startup + HTTP/title check
 
 ---
 
@@ -254,11 +261,9 @@ CI runs automatically on push/PR:
 
 GPL-3.0 — see [LICENSE](LICENSE).
 
-LibreNMS itself is GPL-3.0 licensed. This repository ships convenience scripts and a Docker Compose configuration around the official LibreNMS Docker image; they are also GPL-3.0.
-
 ---
 
 ## Acknowledgments
 
-- [LibreNMS](https://www.librenms.org/) — The network monitoring platform
-- [LibreNMS Docker](https://github.com/librenms/docker) — Official Docker images
+- [LibreNMS](https://www.librenms.org/)
+- [LibreNMS Docker](https://github.com/librenms/docker)

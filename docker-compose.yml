@@ -20,6 +20,7 @@ services:
       - DB_TIMEOUT=60
       - MEMCACHED_HOST=${MEMCACHED_HOST:-memcached}
       - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - CACHE_DRIVER=${CACHE_DRIVER:-redis}
       - SESSION_DRIVER=${SESSION_DRIVER:-redis}
       - BASE_URL=${BASE_URL:-http://localhost}
@@ -67,6 +68,7 @@ services:
       - DB_PORT=3306
       - DB_TIMEOUT=60
       - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - SIDECAR_DISPATCHER=1
     volumes:
       - ./data/librenms:/data
@@ -99,6 +101,7 @@ services:
       - DB_PORT=3306
       - DB_TIMEOUT=60
       - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - SIDECAR_SYSLOGNG=1
     volumes:
       - ./data/librenms:/data
@@ -133,6 +136,7 @@ services:
       - DB_PORT=3306
       - DB_TIMEOUT=60
       - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - SIDECAR_SNMPTRAPD=1
     volumes:
       - ./data/librenms:/data
@@ -168,7 +172,8 @@ services:
       - --max_allowed_packet=64M
       - --innodb_buffer_pool_size=256M
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD}"]
+      # Official MariaDB image helper — no password on process argv
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -191,18 +196,23 @@ services:
       retries: 3
       start_period: 10s
 
-  # Redis (cache + queue backend)
+  # Redis (cache + queue backend) — password required on the bridge network
   redis:
     image: redis:7-alpine
     container_name: librenms-redis
     restart: unless-stopped
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    command:
+      - sh
+      - -c
+      - redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - ./data/redis:/data
     networks:
       - librenms-net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 15s
       timeout: 5s
       retries: 3
