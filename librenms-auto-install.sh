@@ -414,7 +414,7 @@ $DOCKER_COMPOSE up -d
 
 info "Waiting for database to be ready..."
 for i in $(seq 1 60); do
-  if $DOCKER_COMPOSE exec -T db mysqladmin ping -h"localhost" -u"root" -p"${DB_ROOT_PASSWORD}" &>/dev/null; then
+  if $DOCKER_COMPOSE exec -T -e MYSQL_PWD="${DB_ROOT_PASSWORD}" db mysqladmin ping -h"localhost" -u"root" &>/dev/null; then
     info "Database is ready"
     break
   fi
@@ -460,7 +460,7 @@ $DOCKER_COMPOSE exec -T librenms php /opt/librenms/artisan librenms:seed || warn
 
 # Create admin user only if it doesn't already exist (idempotent)
 info "Checking for existing admin user..."
-ADMIN_EXISTS=$($DOCKER_COMPOSE exec -T librenms mysql -hdb -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -e "SELECT COUNT(*) FROM users WHERE username='admin';" 2>/dev/null | tail -1)
+ADMIN_EXISTS=$($DOCKER_COMPOSE exec -T -e MYSQL_PWD="$DB_PASSWORD" librenms mysql -hdb -u"$DB_USER" "$DB_NAME" -e "SELECT COUNT(*) FROM users WHERE username='admin';" 2>/dev/null | tail -1)
 ADMIN_EXISTS=${ADMIN_EXISTS:-0}
 if [[ "$ADMIN_EXISTS" -gt 0 ]]; then
   info "Admin user already exists — preserving credentials"
