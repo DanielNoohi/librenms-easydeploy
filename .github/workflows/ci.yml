@@ -125,7 +125,7 @@ jobs:
         run: |
           cd /opt/librenms-e2e
           echo "Waiting for services..."
-          for i in $(seq 1 600); do
+          for i in $(seq 1 240); do
             HEALTHY=$(docker compose ps 2>/dev/null | grep -c "healthy" || echo "0")
             echo "  [$i] healthy=$HEALTHY/7"
             if [ "$HEALTHY" -ge 4 ]; then
