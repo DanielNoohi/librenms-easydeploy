@@ -15,38 +15,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Lint (shellcheck + shfmt)
+  # Single preflight job avoids burning multiple hosted-runner slots in parallel
+  # (GitHub has been failing to acquire runners for multi-job starts).
+  checks:
+    name: Lint, tests, and compose
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Install shellcheck + shfmt
+      - name: Install tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck shfmt
+          sudo apt-get install -y -qq shellcheck shfmt bats
       - name: ShellCheck
         run: shellcheck librenms-auto-install.sh
       - name: shfmt
         run: shfmt -d -i 2 librenms-auto-install.sh
-
-  test:
-    name: Bats tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Install bats
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
       - name: Bats tests
         run: bats test/
-
-  compose:
-    name: Compose, embed, and secret hygiene
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Validate docker-compose.yml
         run: |
           set -euo pipefail
@@ -105,7 +91,7 @@ jobs:
     name: E2E installer and stack
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [lint, test, compose]
+    needs: [checks]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Run the real installer
