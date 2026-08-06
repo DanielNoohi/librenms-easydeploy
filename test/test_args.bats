@@ -257,6 +257,15 @@ EOF
   fi
 }
 
+@test "backup_file returns success when target is missing" {
+  # Regression: [[ -f ]] && cp ... returned 1 on first install and aborted under set -e.
+  grep -A5 '^backup_file()' "$SCRIPT" | grep -q '|| return 0' || {
+    echo "backup_file must explicitly return 0 when the file is missing" >&2
+    grep -A8 '^backup_file()' "$SCRIPT" >&2 || true
+    return 1
+  }
+}
+
 @test "extract prefers local docker-compose.yml over embedded blob" {
   # Guard against regressions that skip the clone-and-run compose file.
   local_line=$(grep -n 'SCRIPT_DIR/docker-compose.yml' "$SCRIPT" | head -1 | cut -d: -f1)

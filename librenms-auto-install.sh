@@ -184,7 +184,9 @@ validate_email() {
 }
 
 backup_file() {
-  [[ -f "$1" ]] && cp -a "$1" "${1}.bak_${TIMESTAMP}" && info "Backed up $1"
+  # Must return 0 when the source is absent — first installs hit this path under set -e.
+  [[ -f "$1" ]] || return 0
+  cp -a "$1" "${1}.bak_${TIMESTAMP}" && info "Backed up $1"
 }
 
 #-------------------------- .env loading (idempotent reruns) -------------
