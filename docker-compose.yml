@@ -41,7 +41,7 @@ services:
     networks:
       - librenms-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      test: ["CMD-SHELL", "nc -z localhost 8000 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
