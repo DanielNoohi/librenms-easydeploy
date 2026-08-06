@@ -111,15 +111,16 @@ jobs:
         run: |
           set -euo pipefail
           cd /opt/librenms-e2e
-          test "$(stat -c '%a' .env)" = "600"
+          # Installer writes .env as root:600; use sudo for reads/compose.
+          test "$(sudo stat -c '%a' .env)" = "600"
           test "$(stat -c '%a' /tmp/librenms-e2e-credentials)" = "600"
-          grep -qx 'SNMP_DISABLE_AUTHORIZATION=no' .env
+          sudo grep -qx 'SNMP_DISABLE_AUTHORIZATION=no' .env
           grep -qx 'enable_syslog: true' data/librenms/config/syslog.yaml
 
           expected_services='db dispatcher librenms redis snmptrapd syslogng'
           # Wait briefly after installer exit for sidecars to report running
           for i in $(seq 1 30); do
-            actual_services=$(docker compose ps --services --status running | sort | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+            actual_services=$(sudo docker compose ps --services --status running | sort | tr '\n' ' ' | sed 's/[[:space:]]*$//')
             if [ "$actual_services" = "$expected_services" ]; then
               break
             fi
@@ -127,7 +128,7 @@ jobs:
             if [ "$i" -eq 30 ]; then
               echo "::error::Expected running services: $expected_services"
               echo "::error::Actual: $actual_services"
-              docker compose ps || true
+              sudo docker compose ps || true
               exit 1
             fi
           done
@@ -142,23 +143,24 @@ jobs:
 
           set -a
           # shellcheck disable=SC1091
-          source .env
+          # root-owned .env is unreadable without sudo; load via process substitution
+          source <(sudo cat .env)
           set +a
           admin_count=$(
-            docker compose exec -T -e MYSQL_PWD="$DB_PASSWORD" db \
+            sudo docker compose exec -T -e MYSQL_PWD="$DB_PASSWORD" db \
               mariadb -u"$DB_USER" "$DB_NAME" --batch --skip-column-names \
               -e "SELECT COUNT(*) FROM users WHERE username='admin' AND auth_type='mysql';"
           )
           admin_count=$(echo "$admin_count" | tr -d '[:space:]')
           test "$admin_count" = "1"
 
-          if grep -q '^INSTALL=' data/librenms/.env 2>/dev/null; then
+          if sudo grep -q '^INSTALL=' data/librenms/.env 2>/dev/null; then
             echo "::error::Web installer marker still present"
             exit 1
           fi
 
           set +e
-          docker compose exec -T --user librenms librenms \
+          sudo docker compose exec -T librenms \
             php validate.php 2>&1 | tee /tmp/validate.log
           validate_rc=${PIPESTATUS[0]}
           set -e
@@ -179,23 +181,23 @@ jobs:
         run: |
           set -euo pipefail
           cd /opt/librenms-e2e
-          before=$(sha256sum .env | cut -d' ' -f1)
+          before=$(sudo sha256sum .env | cut -d' ' -f1)
           sudo "$GITHUB_WORKSPACE/librenms-auto-install.sh" \
             --non-interactive \
             --url http://localhost \
             --dir /opt/librenms-e2e \
             --no-firewall \
             --no-ssl
-          after=$(sha256sum .env | cut -d' ' -f1)
+          after=$(sudo sha256sum .env | cut -d' ' -f1)
           test "$before" = "$after"
 
-          running_count=$(docker compose ps --services --status running | wc -l | tr -d '[:space:]')
+          running_count=$(sudo docker compose ps --services --status running | wc -l | tr -d '[:space:]')
           test "$running_count" = "6"
           curl -fsSL http://localhost/ | grep -qi 'librenms'
 
           set -a
           # shellcheck disable=SC1091
-          source .env
+          source <(sudo cat .env)
           set +a
           original_db_password="$DB_PASSWORD"
 
@@ -206,8 +208,8 @@ jobs:
             --pollers 3 \
             --no-firewall \
             --no-ssl
-          grep -qx 'POLLERS=3' .env
-          grep -qx "DB_PASSWORD=${original_db_password}" .env
+          sudo grep -qx 'POLLERS=3' .env
+          sudo grep -qx "DB_PASSWORD=${original_db_password}" .env
           compgen -G '.env.bak_*' >/dev/null
 
           backups_before=$(find . -maxdepth 1 -name '.env.bak_*' | wc -l | tr -d '[:space:]')
@@ -220,7 +222,7 @@ jobs:
             --no-ssl
           backups_after=$(find . -maxdepth 1 -name '.env.bak_*' | wc -l | tr -d '[:space:]')
           test "$backups_after" -gt "$backups_before"
-          grep -qx "DB_PASSWORD=${original_db_password}" .env
+          sudo grep -qx "DB_PASSWORD=${original_db_password}" .env
           curl -fsSL http://localhost/ | grep -qi 'librenms'
       - name: Logs on failure
         if: failure()
