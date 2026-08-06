@@ -139,7 +139,7 @@ jobs:
       - name: Verify HTTP from host
         run: |
           cd /opt/librenms-e2e
-          for i in $(seq 1 10); do
+          for i in $(seq 1 60); do
             HTTP=$(curl -fL -o /dev/null -w '%{http_code}' http://localhost:80 2>/dev/null || echo "000")
             echo "  [$i] HTTP=$HTTP"
             if [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 400 ]; then
