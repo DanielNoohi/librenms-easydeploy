@@ -735,9 +735,9 @@ fi
 # The image enables the web installer for an empty database. Automated admin
 # creation replaces that flow, so remove INSTALL and clear the cached config.
 # Either env file may be absent depending on image version — skip missing paths.
-# Variables intentionally expand inside the container shell, not here.
-# shellcheck disable=SC2016
-if ! "${DOCKER_COMPOSE[@]}" exec -T --user librenms librenms sh -c '
+# Run as the container default user (root in exec). --user librenms can fail with
+# "operation not permitted" on some hosts right after sidecars start.
+if ! "${DOCKER_COMPOSE[@]}" exec -T librenms sh -c '
   for f in /data/.env /opt/librenms/.env; do
     [ -f "$f" ] || continue
     sed -i "/^INSTALL=/d" "$f"
