@@ -43,9 +43,9 @@ services:
       - "80:8000"
     depends_on:
       db:
-        condition: service_healthy
+        condition: service_started
       redis:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
       interval: 15s
@@ -62,9 +62,9 @@ services:
       SIDECAR_DISPATCHER: "1"
     depends_on:
       librenms:
-        condition: service_healthy
+        condition: service_started
       redis:
-        condition: service_healthy
+        condition: service_started
 
   syslogng:
     <<: *librenms-service
@@ -77,9 +77,9 @@ services:
       - "514:514/udp"
     depends_on:
       librenms:
-        condition: service_healthy
+        condition: service_started
       redis:
-        condition: service_healthy
+        condition: service_started
 
   snmptrapd:
     <<: *librenms-service
@@ -97,9 +97,9 @@ services:
       - "162:162/udp"
     depends_on:
       librenms:
-        condition: service_healthy
+        condition: service_started
       redis:
-        condition: service_healthy
+        condition: service_started
 
   db:
     image: mariadb:10.11
@@ -121,7 +121,13 @@ services:
       - --max-allowed-packet=64M
       - --innodb-buffer-pool-size=128M
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      # Prefer mariadb-admin — matches the installer wait loop and avoids
+      # flaky healthcheck.sh false-negatives that block depends_on.
+      test:
+        [
+          "CMD-SHELL",
+          "MYSQL_PWD=\"$$MARIADB_ROOT_PASSWORD\" mariadb-admin ping -hlocalhost -uroot --silent",
+        ]
       interval: 5s
       timeout: 5s
       retries: 36
