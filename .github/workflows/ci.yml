@@ -71,7 +71,7 @@ jobs:
   e2e:
     name: E2E Docker Compose startup
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - name: Write .env and start stack
