@@ -3,7 +3,7 @@
 # Installs LibreNMS via Docker Compose with secure defaults
 #
 # NOT PRODUCTION-HARDENED: single-node Docker Compose stack for labs,
-# homelabs, and small deployments. See README "Caveats" section.
+# homelabs, and small deployments. See README "Know before you install".
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -100,7 +100,13 @@ gen_hex() {
 EMBEDDED_COMPOSE_B64="bmFtZTogbGlicmVubXMtZWFzeWRlcGxveQoKeC1saWJyZW5tcy1lbnZpcm9ubWVudDogJmxpYnJlbm1zLWVudmlyb25tZW50CiAgVFo6ICR7VFo6LVVUQ30KICBQVUlEOiAke1BVSUQ6LTEwMDB9CiAgUEdJRDogJHtQR0lEOi0xMDAwfQogIERCX0hPU1Q6IGRiCiAgREJfTkFNRTogJHtEQl9OQU1FOi1saWJyZW5tc30KICBEQl9VU0VSOiAke0RCX1VTRVI6LWxpYnJlbm1zfQogIERCX1BBU1NXT1JEOiAke0RCX1BBU1NXT1JEOj9EQl9QQVNTV09SRCBpcyByZXF1aXJlZH0KICBEQl9QT1JUOiAiMzMwNiIKICBEQl9USU1FT1VUOiAiNjAiCiAgUkVESVNfSE9TVDogJHtSRURJU19IT1NUOi1yZWRpc30KICBSRURJU19QQVNTV09SRDogJHtSRURJU19QQVNTV09SRDo/UkVESVNfUEFTU1dPUkQgaXMgcmVxdWlyZWR9CiAgQ0FDSEVfRFJJVkVSOiAke0NBQ0hFX0RSSVZFUjotcmVkaXN9CiAgU0VTU0lPTl9EUklWRVI6ICR7U0VTU0lPTl9EUklWRVI6LXJlZGlzfQogIExJQlJFTk1TX1NOTVBfQ09NTVVOSVRZOiAke0xJQlJFTk1TX1NOTVBfQ09NTVVOSVRZOj9MSUJSRU5NU19TTk1QX0NPTU1VTklUWSBpcyByZXF1aXJlZH0KCngtbGlicmVubXMtc2VydmljZTogJmxpYnJlbm1zLXNlcnZpY2UKICBpbWFnZTogbGlicmVubXMvbGlicmVubXM6MjYuNy4wCiAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICBjYXBfYWRkOgogICAgLSBORVRfQURNSU4KICAgIC0gTkVUX1JBVwogIHZvbHVtZXM6CiAgICAtIC4vZGF0YS9saWJyZW5tczovZGF0YQogIG5ldHdvcmtzOgogICAgLSBsaWJyZW5tcy1uZXQKICBsb2dnaW5nOgogICAgZHJpdmVyOiBqc29uLWZpbGUKICAgIG9wdGlvbnM6CiAgICAgIG1heC1zaXplOiAxMG0KICAgICAgbWF4LWZpbGU6ICIzIgoKc2VydmljZXM6CiAgbGlicmVubXM6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcwogICAgZW52aXJvbm1lbnQ6CiAgICAgIDw8OiAqbGlicmVubXMtZW52aXJvbm1lbnQKICAgICAgTElCUkVOTVNfQkFTRV9VUkw6ICR7TElCUkVOTVNfQkFTRV9VUkw6LS99CiAgICBwb3J0czoKICAgICAgLSAiODA6ODAwMCIKICAgIGRlcGVuZHNfb246CiAgICAgIGRiOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5CiAgICAgIHJlZGlzOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5CiAgICBoZWFsdGhjaGVjazoKICAgICAgdGVzdDogWyJDTUQiLCAiY3VybCIsICItZnNTIiwgImh0dHA6Ly9sb2NhbGhvc3Q6ODAwMC8iXQogICAgICBpbnRlcnZhbDogMTVzCiAgICAgIHRpbWVvdXQ6IDVzCiAgICAgIHJldHJpZXM6IDEyCiAgICAgIHN0YXJ0X3BlcmlvZDogOTBzCgogIGRpc3BhdGNoZXI6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcy1kaXNwYXRjaGVyCiAgICBlbnZpcm9ubWVudDoKICAgICAgPDw6ICpsaWJyZW5tcy1lbnZpcm9ubWVudAogICAgICBESVNQQVRDSEVSX05PREVfSUQ6IGRpc3BhdGNoZXIxCiAgICAgIFNJREVDQVJfRElTUEFUQ0hFUjogIjEiCiAgICBkZXBlbmRzX29uOgogICAgICBsaWJyZW5tczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQogICAgICByZWRpczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQoKICBzeXNsb2duZzoKICAgIDw8OiAqbGlicmVubXMtc2VydmljZQogICAgaG9zdG5hbWU6IGxpYnJlbm1zLXN5c2xvZ25nCiAgICBlbnZpcm9ubWVudDoKICAgICAgPDw6ICpsaWJyZW5tcy1lbnZpcm9ubWVudAogICAgICBTSURFQ0FSX1NZU0xPR05HOiAiMSIKICAgIHBvcnRzOgogICAgICAtICI1MTQ6NTE0L3RjcCIKICAgICAgLSAiNTE0OjUxNC91ZHAiCiAgICBkZXBlbmRzX29uOgogICAgICBsaWJyZW5tczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQogICAgICByZWRpczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQoKICBzbm1wdHJhcGQ6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcy1zbm1wdHJhcGQKICAgIGVudmlyb25tZW50OgogICAgICA8PDogKmxpYnJlbm1zLWVudmlyb25tZW50CiAgICAgIFNJREVDQVJfU05NUFRSQVBEOiAiMSIKICAgICAgU05NUF9VU0VSOiAke1NOTVBfVVNFUjotbGlicmVubXNfdXNlcn0KICAgICAgU05NUF9BVVRIOiAke1NOTVBfQVVUSDo/U05NUF9BVVRIIGlzIHJlcXVpcmVkfQogICAgICBTTk1QX1BSSVY6ICR7U05NUF9QUklWOj9TTk1QX1BSSVYgaXMgcmVxdWlyZWR9CiAgICAgIFNOTVBfRU5HSU5FSUQ6ICR7U05NUF9FTkdJTkVJRDo/U05NUF9FTkdJTkVJRCBpcyByZXF1aXJlZH0KICAgICAgU05NUF9ESVNBQkxFX0FVVEhPUklaQVRJT046ICR7U05NUF9ESVNBQkxFX0FVVEhPUklaQVRJT046LW5vfQogICAgcG9ydHM6CiAgICAgIC0gIjE2MjoxNjIvdGNwIgogICAgICAtICIxNjI6MTYyL3VkcCIKICAgIGRlcGVuZHNfb246CiAgICAgIGxpYnJlbm1zOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5CiAgICAgIHJlZGlzOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5CgogIGRiOgogICAgaW1hZ2U6IG1hcmlhZGI6MTAuMTEKICAgIHJlc3RhcnQ6IHVubGVzcy1zdG9wcGVkCiAgICBlbnZpcm9ubWVudDoKICAgICAgVFo6ICR7VFo6LVVUQ30KICAgICAgTUFSSUFEQl9ST09UX1BBU1NXT1JEOiAke0RCX1JPT1RfUEFTU1dPUkQ6P0RCX1JPT1RfUEFTU1dPUkQgaXMgcmVxdWlyZWR9CiAgICAgIE1BUklBREJfREFUQUJBU0U6ICR7REJfTkFNRTotbGlicmVubXN9CiAgICAgIE1BUklBREJfVVNFUjogJHtEQl9VU0VSOi1saWJyZW5tc30KICAgICAgTUFSSUFEQl9QQVNTV09SRDogJHtEQl9QQVNTV09SRDo/REJfUEFTU1dPUkQgaXMgcmVxdWlyZWR9CiAgICB2b2x1bWVzOgogICAgICAtIC4vZGF0YS9kYjovdmFyL2xpYi9teXNxbAogICAgY29tbWFuZDoKICAgICAgLSAtLWlubm9kYi1maWxlLXBlci10YWJsZT0xCiAgICAgIC0gLS1sb3dlci1jYXNlLXRhYmxlLW5hbWVzPTAKICAgICAgLSAtLWNoYXJhY3Rlci1zZXQtc2VydmVyPXV0ZjhtYjQKICAgICAgLSAtLWNvbGxhdGlvbi1zZXJ2ZXI9dXRmOG1iNF91bmljb2RlX2NpCiAgICAgIC0gLS1tYXgtYWxsb3dlZC1wYWNrZXQ9NjRNCiAgICAgIC0gLS1pbm5vZGItYnVmZmVyLXBvb2wtc2l6ZT0yNTZNCiAgICBoZWFsdGhjaGVjazoKICAgICAgdGVzdDogWyJDTUQiLCAiaGVhbHRoY2hlY2suc2giLCAiLS1jb25uZWN0IiwgIi0taW5ub2RiX2luaXRpYWxpemVkIl0KICAgICAgaW50ZXJ2YWw6IDEwcwogICAgICB0aW1lb3V0OiA1cwogICAgICByZXRyaWVzOiAxMgogICAgICBzdGFydF9wZXJpb2Q6IDMwcwogICAgbmV0d29ya3M6CiAgICAgIC0gbGlicmVubXMtbmV0CiAgICBsb2dnaW5nOgogICAgICBkcml2ZXI6IGpzb24tZmlsZQogICAgICBvcHRpb25zOgogICAgICAgIG1heC1zaXplOiAxMG0KICAgICAgICBtYXgtZmlsZTogIjMiCgogIHJlZGlzOgogICAgaW1hZ2U6IHJlZGlzOjcuMi1hbHBpbmUKICAgIHJlc3RhcnQ6IHVubGVzcy1zdG9wcGVkCiAgICBlbnZpcm9ubWVudDoKICAgICAgUkVESVNfUEFTU1dPUkQ6ICR7UkVESVNfUEFTU1dPUkQ6P1JFRElTX1BBU1NXT1JEIGlzIHJlcXVpcmVkfQogICAgY29tbWFuZDoKICAgICAgLSAvYmluL3NoCiAgICAgIC0gLWVjCiAgICAgIC0gfAogICAgICAgIHVtYXNrIDA3NwogICAgICAgIHsKICAgICAgICAgIHByaW50ZiAncmVxdWlyZXBhc3MgJXNcbicgIiQkUkVESVNfUEFTU1dPUkQiCiAgICAgICAgICBwcmludGYgJ21heG1lbW9yeSA1MTJtYlxuJwogICAgICAgICAgcHJpbnRmICdtYXhtZW1vcnktcG9saWN5IG5vZXZpY3Rpb25cbicKICAgICAgICAgIHByaW50ZiAnYXBwZW5kb25seSB5ZXNcbicKICAgICAgICB9ID4vdG1wL3JlZGlzLmNvbmYKICAgICAgICBleGVjIHJlZGlzLXNlcnZlciAvdG1wL3JlZGlzLmNvbmYKICAgIHZvbHVtZXM6CiAgICAgIC0gLi9kYXRhL3JlZGlzOi9kYXRhCiAgICBoZWFsdGhjaGVjazoKICAgICAgdGVzdDogWyJDTUQtU0hFTEwiLCAiUkVESVNDTElfQVVUSD1cIiQkUkVESVNfUEFTU1dPUkRcIiByZWRpcy1jbGkgcGluZyB8IGdyZXAgLXEgUE9ORyJdCiAgICAgIGludGVydmFsOiAxMHMKICAgICAgdGltZW91dDogNXMKICAgICAgcmV0cmllczogMTIKICAgICAgc3RhcnRfcGVyaW9kOiAxMHMKICAgIG5ldHdvcmtzOgogICAgICAtIGxpYnJlbm1zLW5ldAogICAgbG9nZ2luZzoKICAgICAgZHJpdmVyOiBqc29uLWZpbGUKICAgICAgb3B0aW9uczoKICAgICAgICBtYXgtc2l6ZTogMTBtCiAgICAgICAgbWF4LWZpbGU6ICIzIgoKbmV0d29ya3M6CiAgbGlicmVubXMtbmV0OgogICAgZHJpdmVyOiBicmlkZ2UK"
 
 extract_docker_compose() {
-  # Use the base64-encoded compose file embedded in the variable above
+  # Prefer a compose file next to this script (git clone / local edits), then
+  # fall back to the embedded blob (curl|bash one-liner installs).
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
+    cat "$SCRIPT_DIR/docker-compose.yml"
+    return 0
+  fi
   if command -v python3 &>/dev/null; then
     python3 -c "
 import base64, sys
@@ -108,12 +114,6 @@ b64 = '''$EMBEDDED_COMPOSE_B64'''
 sys.stdout.buffer.write(base64.b64decode(b64))
 " 2>/dev/null && return 0
   fi
-  # Fallback: use script directory (for curl|bash without sudo)
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  [[ -f "$SCRIPT_DIR/docker-compose.yml" ]] && {
-    cat "$SCRIPT_DIR/docker-compose.yml"
-    return 0
-  }
   die "Cannot find docker-compose.yml — re-download the installer"
 }
 
@@ -234,7 +234,7 @@ Usage: sudo ./librenms-auto-install.sh [OPTIONS]
 LibreNMS Docker Compose Installer - Network monitoring with auto-discovery,
 SNMP, topology maps, traffic analysis, and alerting.
 
-NOTE: This is NOT production-hardened. See README "Caveats".
+NOTE: This is NOT production-hardened. See README "Know before you install".
 
 Options:
   -h, --help                 Show this help
@@ -553,12 +553,16 @@ elif [[ -f .env && "$FORCE" == false ]]; then
   # Preserve existing .env; append any missing keys (e.g., REDIS_PASSWORD
   # from a pre-hardening install)
   for key in CACHE_DRIVER SESSION_DRIVER ADMIN_EMAIL REDIS_PASSWORD \
-    LIBRENMS_SNMP_COMMUNITY SNMP_USER SNMP_AUTH SNMP_PRIV SNMP_ENGINEID; do
-    grep -q "^${key}=" .env 2>/dev/null || echo "${key}=${!key}" >>.env
+    LIBRENMS_SNMP_COMMUNITY SNMP_USER SNMP_AUTH SNMP_PRIV SNMP_ENGINEID \
+    LIBRENMS_BASE_URL SNMP_DISABLE_AUTHORIZATION; do
+    if ! grep -q "^${key}=" .env 2>/dev/null; then
+      case "$key" in
+      LIBRENMS_BASE_URL) echo 'LIBRENMS_BASE_URL=/' >>.env ;;
+      SNMP_DISABLE_AUTHORIZATION) echo 'SNMP_DISABLE_AUTHORIZATION=no' >>.env ;;
+      *) echo "${key}=${!key}" >>.env ;;
+      esac
+    fi
   done
-  grep -q '^LIBRENMS_BASE_URL=' .env 2>/dev/null || echo 'LIBRENMS_BASE_URL=/' >>.env
-  grep -q '^SNMP_DISABLE_AUTHORIZATION=' .env 2>/dev/null ||
-    echo 'SNMP_DISABLE_AUTHORIZATION=no' >>.env
   chmod 600 .env
   info ".env already exists — preserving (use --force to overwrite)"
 else
@@ -692,11 +696,8 @@ if [[ "$ADMIN_EXISTS" =~ ^[1-9][0-9]*$ ]]; then
 else
   if [[ -z "$ADMIN_PASS" ]]; then
     ADMIN_PASS="$(gen_pass 24)"
-    if grep -q '^ADMIN_PASS=' .env; then
-      sed -i "s/^ADMIN_PASS=.*/ADMIN_PASS=${ADMIN_PASS}/" .env
-    else
-      echo "ADMIN_PASS=${ADMIN_PASS}" >>.env
-    fi
+    # Rewrite .env atomically so we never leave a half-updated secrets file.
+    write_env_file .env
     chmod 600 .env
   fi
   info "Creating admin user..."
@@ -712,8 +713,16 @@ fi
 
 # The image enables the web installer for an empty database. Automated admin
 # creation replaces that flow, so remove INSTALL and clear the cached config.
-if ! "${DOCKER_COMPOSE[@]}" exec -T --user librenms librenms sh -c \
-  "sed -i '/^INSTALL=/d' /data/.env /opt/librenms/.env && artisan config:clear --no-interaction"; then
+# Either env file may be absent depending on image version — skip missing paths.
+# Variables intentionally expand inside the container shell, not here.
+# shellcheck disable=SC2016
+if ! "${DOCKER_COMPOSE[@]}" exec -T --user librenms librenms sh -c '
+  for f in /data/.env /opt/librenms/.env; do
+    [ -f "$f" ] || continue
+    sed -i "/^INSTALL=/d" "$f"
+  done
+  artisan config:clear --no-interaction
+'; then
   die "Could not finalize the LibreNMS installation"
 fi
 

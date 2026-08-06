@@ -48,7 +48,14 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Validate docker-compose.yml
-        run: docker compose -f docker-compose.yml config --quiet
+        run: |
+          set -euo pipefail
+          # Required ${VAR:?...} placeholders need values; .env.example is safe.
+          set -a
+          # shellcheck disable=SC1091
+          source .env.example
+          set +a
+          docker compose -f docker-compose.yml config --quiet
       - name: No :latest tags
         run: |
           if grep -q ':latest' docker-compose.yml; then
@@ -57,6 +64,11 @@ jobs:
           fi
       - name: All services present
         run: |
+          set -euo pipefail
+          set -a
+          # shellcheck disable=SC1091
+          source .env.example
+          set +a
           SERVICES=$(docker compose -f docker-compose.yml config --services)
           for svc in db redis librenms dispatcher syslogng snmptrapd; do
             echo "$SERVICES" | grep -q "^${svc}$" || { echo "::error::Missing: $svc"; exit 1; }

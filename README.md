@@ -4,22 +4,31 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![LibreNMS](https://img.shields.io/badge/LibreNMS-26.7.0-0B3D2E)](https://www.librenms.org/)
 
-**One command. Full LibreNMS stack.**  
-Docker Compose deployment for network monitoring — auto-discovery, SNMP, topology, traffic graphs, syslog, traps, and alerting — tuned for labs, homelabs, and small single-node sites.
+```text
+  ┌─────────────────────────────────────────────────────────┐
+  │  one script  →  secrets  →  compose  →  admin ready     │
+  │                                                         │
+  │   librenms · dispatcher · mariadb · redis               │
+  │   syslog · snmp traps                                   │
+  └─────────────────────────────────────────────────────────┘
+```
 
-Complements Zabbix (server/app metrics) and Lansweeper (endpoint inventory) with **network-centric visibility**.
+**Network monitoring without the wiring tax.**  
+Drop a full LibreNMS stack on a single Linux host — auto-discovery, SNMP, topology, graphs, syslog, traps, and alerting — with credentials generated for you and CI that installs the real thing.
+
+Built for labs, homelabs, and small single-node sites. Complements Zabbix (server/app metrics) and Lansweeper (endpoint inventory) with **network-centric visibility**.
 
 ---
 
 ## Why this exists
 
-Official LibreNMS Docker is solid but still leaves you wiring secrets, Redis auth, sidecars, firewall holes, and first-boot admin yourself. EasyDeploy wraps that into a reviewed installer that:
+Official LibreNMS Docker is solid. The boring parts are still on you: secrets, Redis auth, sidecars, firewall holes, first-boot admin. EasyDeploy wraps that into one reviewed installer that:
 
 - Generates strong credentials and a locked-down `.env`
 - Brings up app, dispatcher, MariaDB, Redis, syslog, and SNMP traps together
-- Creates the admin user and applies poller/syslog settings
-- Survives reruns without wiping your secrets
-- Ships with CI that actually installs the stack end-to-end
+- Creates the admin user and applies poller / syslog settings
+- Survives reruns without wiping secrets
+- Ships CI that runs the installer end-to-end — not a smoke-test stub
 
 ---
 
@@ -33,7 +42,7 @@ chmod +x librenms-auto-install.sh
 sudo ./librenms-auto-install.sh
 ```
 
-Or clone the repo (keeps `docker-compose.yml` beside the installer):
+Or clone the repo (uses the local `docker-compose.yml` beside the installer):
 
 ```bash
 git clone https://github.com/DanielNoohi/librenms-easydeploy.git
@@ -149,7 +158,7 @@ Sidecars follow the [official LibreNMS Docker design](https://github.com/librenm
 | `./data/db` | MariaDB |
 | `./data/redis` | Redis persistence |
 
-Local Compose tweaks belong in `docker-compose.override.yml`. After editing `docker-compose.yml` in this repo, refresh the embedded blob:
+Local Compose tweaks belong in `docker-compose.override.yml`. After editing `docker-compose.yml` in this repo, refresh the embedded blob used by `curl|bash`:
 
 ```bash
 python3 scripts/sync_embedded_compose.py
@@ -256,11 +265,11 @@ sudo apt-get install -y bats shellcheck shfmt
 bats test/
 shellcheck librenms-auto-install.sh
 shfmt -d -i 2 librenms-auto-install.sh
-docker compose -f docker-compose.yml config --quiet
+docker compose -f docker-compose.yml config --quiet   # needs env from .env.example
 python3 scripts/sync_embedded_compose.py --check
 ```
 
-CI on push and PR runs lint, Bats, Compose validation, secret scanning, and a full installer E2E (permissions, services, HTTP, admin, `validate.php`, idempotent rerun, and safe `--force`).
+CI on push and PR runs lint, Bats, Compose validation (with `.env.example`), secret scanning, and a full installer E2E (permissions, services, HTTP, admin, `validate.php`, idempotent rerun, and safe `--force`).
 
 ---
 

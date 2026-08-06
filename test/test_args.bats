@@ -257,6 +257,20 @@ EOF
   fi
 }
 
+@test "extract prefers local docker-compose.yml over embedded blob" {
+  # Guard against regressions that skip the clone-and-run compose file.
+  local_line=$(grep -n 'SCRIPT_DIR/docker-compose.yml' "$SCRIPT" | head -1 | cut -d: -f1)
+  embed_line=$(awk '/^extract_docker_compose\(\)/{f=1} f && /EMBEDDED_COMPOSE_B64/{print NR; exit}' "$SCRIPT")
+  [[ -n "$local_line" && -n "$embed_line" ]] || {
+    echo "could not locate local/embedded compose paths in extract_docker_compose" >&2
+    return 1
+  }
+  ((local_line < embed_line)) || {
+    echo "local docker-compose.yml (line $local_line) must be preferred before embedded blob (line $embed_line)" >&2
+    return 1
+  }
+}
+
 @test "embedded compose matches docker-compose.yml" {
   command -v python3 >/dev/null || skip "python3 required"
   run python3 scripts/sync_embedded_compose.py --check
