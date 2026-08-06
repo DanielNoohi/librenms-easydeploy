@@ -63,6 +63,14 @@ teardown() {
   assert_output "test.example.com"
 }
 
+@test "Interactive dry-run never prompts or writes credentials" {
+  creds="$TEST_TMP/should-not-exist"
+  run "$SCRIPT" --dry-run --save-creds "$creds"
+  assert_success
+  assert_output "Base URL: http://localhost"
+  [[ ! -e "$creds" ]]
+}
+
 @test "Dry-run with save-creds shows file path" {
   run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --save-creds /tmp/test-creds.txt
   assert_success
@@ -72,7 +80,7 @@ teardown() {
 @test "Invalid URL format fails" {
   run "$SCRIPT" --dry-run --non-interactive --url "not-a-url"
   assert_failure
-  assert_output "Invalid URL format"
+  assert_output "Invalid URL"
 }
 
 @test "Invalid pollers value fails" {
@@ -92,7 +100,7 @@ teardown() {
   assert_success
 }
 
-@test "Timezone validation warns but continues" {
+@test "Valid timezone is accepted" {
   run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --timezone UTC
   assert_success
 }
@@ -106,21 +114,22 @@ teardown() {
 @test "Help describes --force as .env overwrite" {
   run "$SCRIPT" --help
   assert_success
-  assert_output "Overwrite existing .env"
+  assert_output "Rewrite existing .env"
+  assert_output "preserves loaded secrets"
 }
 
 @test "Dry-run shows sidecar container plan" {
   run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com
   assert_success
-  assert_output "Would copy docker-compose.yml"
-  assert_output "create .env"
+  assert_output "Would install docker-compose.yml"
+  assert_output "create/update .env"
   assert_output "start services"
 }
 
-@test "Invalid timezone format warns but continues" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --timezone "Invalid/Timezone"
-  assert_success
-  assert_output "may not be valid"
+@test "Invalid timezone fails early" {
+  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --timezone "../Invalid"
+  assert_failure
+  assert_output "Invalid timezone"
 }
 
 @test "le-email is rejected with honest TLS message" {
@@ -142,7 +151,9 @@ teardown() {
     return 1
   fi
 
-  for key in TZ BASE_URL DB_NAME DB_USER DB_PASSWORD DB_ROOT_PASSWORD REDIS_PASSWORD ADMIN_PASS ADMIN_EMAIL POLLERS; do
+  for key in TZ BASE_URL LIBRENMS_BASE_URL DB_NAME DB_USER DB_PASSWORD DB_ROOT_PASSWORD \
+    REDIS_PASSWORD ADMIN_PASS ADMIN_EMAIL POLLERS LIBRENMS_SNMP_COMMUNITY SNMP_USER \
+    SNMP_AUTH SNMP_PRIV SNMP_ENGINEID SNMP_DISABLE_AUTHORIZATION; do
     grep -q "^${key}=" "$envfile" || {
       echo "missing key: $key" >&2
       cat "$envfile" >&2
@@ -157,21 +168,97 @@ teardown() {
     return 1
   }
   grep -q '^BASE_URL=http://librenms.test.local$' "$envfile"
+  grep -q '^LIBRENMS_BASE_URL=/$' "$envfile"
+  grep -q '^SNMP_DISABLE_AUTHORIZATION=no$' "$envfile"
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    mode=$(stat -c '%a' "$envfile")
+    [[ "$mode" == "600" ]]
+  fi
+}
+
+@test "existing .env values survive a non-interactive rerun" {
+  install_dir="$TEST_TMP/existing"
+  mkdir -p "$install_dir"
+  cat >"$install_dir/.env" <<'EOF'
+TZ=Europe/Berlin
+PUID=2000
+PGID=2001
+BASE_URL=https://existing.example.com
+DB_NAME=existing_db
+DB_USER=existing_user
+DB_PASSWORD=ExistingDbPass123
+DB_ROOT_PASSWORD=ExistingRootPass123
+REDIS_HOST=redis
+REDIS_PASSWORD=ExistingRedisPass123
+POLLERS=7
+CACHE_DRIVER=redis
+SESSION_DRIVER=redis
+LIBRENMS_SNMP_COMMUNITY=ExistingCommunity123
+SNMP_USER=existing_snmp
+SNMP_AUTH=ExistingAuthPass123
+SNMP_PRIV=ExistingPrivPass123
+SNMP_ENGINEID=00112233445566778899
+ADMIN_PASS=ExistingAdminPass123
+ADMIN_EMAIL=existing@example.com
+EOF
+
+  emitted="$TEST_TMP/existing-emitted.env"
+  run "$SCRIPT" --non-interactive --dir "$install_dir" --emit-env "$emitted"
+  assert_success
+  grep -q '^TZ=Europe/Berlin$' "$emitted"
+  grep -q '^PUID=2000$' "$emitted"
+  grep -q '^DB_NAME=existing_db$' "$emitted"
+  grep -q '^POLLERS=7$' "$emitted"
+  grep -q '^DB_PASSWORD=ExistingDbPass123$' "$emitted"
+  grep -q '^ADMIN_PASS=ExistingAdminPass123$' "$emitted"
+}
+
+@test "CLI values override an existing .env" {
+  install_dir="$TEST_TMP/override"
+  mkdir -p "$install_dir"
+  cat >"$install_dir/.env" <<'EOF'
+BASE_URL=https://old.example.com
+POLLERS=4
+EOF
+
+  emitted="$TEST_TMP/override-emitted.env"
+  run "$SCRIPT" --non-interactive --dir "$install_dir" \
+    --url https://new.example.com --pollers 9 --emit-env "$emitted"
+  assert_success
+  grep -q '^BASE_URL=https://new.example.com$' "$emitted"
+  grep -q '^POLLERS=9$' "$emitted"
+}
+
+@test "URL paths, credentials, and invalid ports are rejected" {
+  run "$SCRIPT" --dry-run --non-interactive --url https://example.com/librenms
+  assert_failure
+  assert_output "Invalid URL"
+
+  run "$SCRIPT" --dry-run --non-interactive --url https://user:pass@example.com
+  assert_failure
+  assert_output "Invalid URL"
+
+  run "$SCRIPT" --dry-run --non-interactive --url https://example.com:70000
+  assert_failure
+  assert_output "Invalid URL"
+}
+
+@test "database identifiers reject unsafe characters" {
+  run "$SCRIPT" --dry-run --non-interactive --url https://example.com --db-name 'bad-name'
+  assert_failure
+  assert_output "Database name may contain only"
+}
+
+@test "docker compose is invoked as an array" {
+  grep -q '^DOCKER_COMPOSE=(docker compose)$' "$SCRIPT"
+  if grep -qE '^\$DOCKER_COMPOSE ' "$SCRIPT"; then
+    echo "unsafe scalar docker compose invocation found" >&2
+    return 1
+  fi
 }
 
 @test "embedded compose matches docker-compose.yml" {
   command -v python3 >/dev/null || skip "python3 required"
-  run python3 -c "
-import base64, pathlib, re, sys
-root = pathlib.Path('.')
-compose = (root / 'docker-compose.yml').read_bytes()
-script = (root / 'librenms-auto-install.sh').read_text(encoding='utf-8')
-m = re.search(r'EMBEDDED_COMPOSE_B64=\"([^\"]*)\"', script)
-if not m:
-    sys.exit('EMBEDDED_COMPOSE_B64 missing')
-decoded = base64.b64decode(m.group(1))
-if decoded != compose:
-    sys.exit(f'drift: file={len(compose)} embedded={len(decoded)}')
-"
+  run python3 scripts/sync_embedded_compose.py --check
   assert_success
 }

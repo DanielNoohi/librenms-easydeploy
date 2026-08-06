@@ -8,24 +8,32 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# Never fail silently: report the failing command and line, then exit 1
+# Never fail silently. Do not log BASH_COMMAND because it may contain secrets.
 # shellcheck disable=SC2154  # rc is set via $? inside the trap
-trap 'rc=$?; msg="[ERROR] command failed at line $LINENO: $BASH_COMMAND (exit $rc)"; echo "$msg" >&2; echo "$msg" >>"${LOG_FILE:-/var/log/librenms-easydeploy.log}" 2>/dev/null || true; exit $rc' ERR
+trap 'rc=$?; msg="[ERROR] command failed at line $LINENO (exit $rc)"; echo "$msg" >&2; echo "$msg" >>"${LOG_FILE:-/var/log/librenms-easydeploy.log}" 2>/dev/null || true; exit $rc' ERR
 
-#-------------------------- Defaults ------------------------------------
-INSTALL_DIR="/opt/librenms-easydeploy"
-TZ="UTC"
-PUID=1000
-PGID=1000
-BASE_URL=""
-DB_NAME="librenms"
-DB_USER="librenms"
-DB_PASSWORD=""
-DB_ROOT_PASSWORD=""
-MEMCACHED_HOST="memcached"
-REDIS_HOST="redis"
-REDIS_PASSWORD=""
-POLLERS=16
+#-------------------------- Inputs / defaults ---------------------------
+# Keep configurable values empty until after argument parsing and load_env().
+# This gives the intended precedence: CLI/exported env > existing .env > default.
+INSTALL_DIR="${INSTALL_DIR:-/opt/librenms-easydeploy}"
+TZ="${TZ:-}"
+PUID="${PUID:-}"
+PGID="${PGID:-}"
+BASE_URL="${BASE_URL:-}"
+DB_NAME="${DB_NAME:-}"
+DB_USER="${DB_USER:-}"
+DB_PASSWORD="${DB_PASSWORD:-}"
+DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-}"
+REDIS_HOST="${REDIS_HOST:-}"
+REDIS_PASSWORD="${REDIS_PASSWORD:-}"
+POLLERS="${POLLERS:-}"
+CACHE_DRIVER="${CACHE_DRIVER:-}"
+SESSION_DRIVER="${SESSION_DRIVER:-}"
+LIBRENMS_SNMP_COMMUNITY="${LIBRENMS_SNMP_COMMUNITY:-}"
+SNMP_USER="${SNMP_USER:-}"
+SNMP_AUTH="${SNMP_AUTH:-}"
+SNMP_PRIV="${SNMP_PRIV:-}"
+SNMP_ENGINEID="${SNMP_ENGINEID:-}"
 NON_INTERACTIVE=false
 FORCE=false
 DRY_RUN=false
@@ -33,12 +41,18 @@ SKIP_FIREWALL=false
 SKIP_SSL=false
 SAVE_CREDS=""
 EMIT_ENV=""
-ADMIN_PASS=""
-ADMIN_EMAIL=""
+ADMIN_PASS="${ADMIN_PASS:-}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+DIR_SET=false
+URL_SET=false
+TZ_SET=false
+POLLERS_SET=false
+DB_NAME_SET=false
+DB_USER_SET=false
 
 #-------------------------- Logging -------------------------------------
 LOG_FILE="/var/log/librenms-easydeploy.log"
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+TIMESTAMP="$(date +%Y%m%d_%H%M%S)_$$"
 
 log() {
   local level="$1"
@@ -75,8 +89,15 @@ print(''.join(secrets.choice(alphabet) for _ in range($len)))
   echo "$pass"
 }
 
+gen_hex() {
+  local bytes="${1:-10}"
+  command -v python3 &>/dev/null || die "python3 is required for secret generation"
+  python3 -c "import secrets; print(secrets.token_hex($bytes))" ||
+    die "Failed to generate hexadecimal secret"
+}
+
 #-------------------------- Embedded docker-compose.yml (for curl|bash mode) --
-EMBEDDED_COMPOSE_B64="c2VydmljZXM6CiAgIyBMaWJyZU5NUyB3ZWIgYXBwbGljYXRpb24gKyBhbGVydGluZwogIGxpYnJlbm1zOgogICAgaW1hZ2U6IGxpYnJlbm1zL2xpYnJlbm1zOjI2LjcuMAogICAgY29udGFpbmVyX25hbWU6IGxpYnJlbm1zCiAgICBob3N0bmFtZTogbGlicmVubXMKICAgIGNhcF9hZGQ6CiAgICAgIC0gTkVUX0FETUlOCiAgICAgIC0gTkVUX1JBVwogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICAgIGVudmlyb25tZW50OgogICAgICAtIFRaPSR7VFo6LVVUQ30KICAgICAgLSBQVUlEPSR7UFVJRDotMTAwMH0KICAgICAgLSBQR0lEPSR7UEdJRDotMTAwMH0KICAgICAgLSBEQl9IT1NUPWRiCiAgICAgIC0gREJfTkFNRT0ke0RCX05BTUU6LWxpYnJlbm1zfQogICAgICAtIERCX1VTRVI9JHtEQl9VU0VSOi1saWJyZW5tc30KICAgICAgLSBEQl9QQVNTV09SRD0ke0RCX1BBU1NXT1JEfQogICAgICAtIERCX1BPUlQ9MzMwNgogICAgICAtIERCX1RJTUVPVVQ9NjAKICAgICAgLSBNRU1DQUNIRURfSE9TVD0ke01FTUNBQ0hFRF9IT1NUOi1tZW1jYWNoZWR9CiAgICAgIC0gUkVESVNfSE9TVD0ke1JFRElTX0hPU1Q6LXJlZGlzfQogICAgICAtIFJFRElTX1BBU1NXT1JEPSR7UkVESVNfUEFTU1dPUkR9CiAgICAgIC0gQ0FDSEVfRFJJVkVSPSR7Q0FDSEVfRFJJVkVSOi1yZWRpc30KICAgICAgLSBTRVNTSU9OX0RSSVZFUj0ke1NFU1NJT05fRFJJVkVSOi1yZWRpc30KICAgICAgLSBCQVNFX1VSTD0ke0JBU0VfVVJMOi1odHRwOi8vbG9jYWxob3N0fQogICAgICAtIFBPTExFUlM9JHtQT0xMRVJTOi0xNn0KICAgIHZvbHVtZXM6CiAgICAgIC0gLi9kYXRhL2xpYnJlbm1zOi9kYXRhCiAgICAgIC0gLi9sb2dzL2xpYnJlbm1zOi9vcHQvbGlicmVubXMvbG9ncwogICAgICAtIC4vY29uZmlnL2xpYnJlbm1zOi9vcHQvbGlicmVubXMvY29uZmlnLmQKICAgICAgLSAuL3JyZDovb3B0L2xpYnJlbm1zL3JyZAogICAgcG9ydHM6CiAgICAgIC0gIjgwOjgwMDAiCiAgICBkZXBlbmRzX29uOgogICAgICBkYjoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQogICAgICBtZW1jYWNoZWQ6CiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX2hlYWx0aHkKICAgICAgcmVkaXM6CiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX2hlYWx0aHkKICAgIG5ldHdvcmtzOgogICAgICAtIGxpYnJlbm1zLW5ldAogICAgaGVhbHRoY2hlY2s6CiAgICAgIHRlc3Q6IFsiQ01ELVNIRUxMIiwgIm5jIC16IGxvY2FsaG9zdCA4MDAwIHx8IGV4aXQgMSJdCiAgICAgIGludGVydmFsOiAzMHMKICAgICAgdGltZW91dDogMTBzCiAgICAgIHJldHJpZXM6IDMKICAgICAgc3RhcnRfcGVyaW9kOiA2MHMKCiAgIyBEaXN0cmlidXRlZCBwb2xsZXIgKG9mZmljaWFsIHNpZGVjYXIg4oCUIFNJREVDQVJfRElTUEFUQ0hFUj0xKQogIGRpc3BhdGNoZXI6CiAgICBpbWFnZTogbGlicmVubXMvbGlicmVubXM6MjYuNy4wCiAgICBjb250YWluZXJfbmFtZTogbGlicmVubXMtZGlzcGF0Y2hlcgogICAgaG9zdG5hbWU6IGxpYnJlbm1zLWRpc3BhdGNoZXIKICAgIGNhcF9hZGQ6CiAgICAgIC0gTkVUX0FETUlOCiAgICAgIC0gTkVUX1JBVwogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICAgIGVudmlyb25tZW50OgogICAgICAtIFRaPSR7VFo6LVVUQ30KICAgICAgLSBQVUlEPSR7UFVJRDotMTAwMH0KICAgICAgLSBQR0lEPSR7UEdJRDotMTAwMH0KICAgICAgLSBEQl9IT1NUPWRiCiAgICAgIC0gREJfTkFNRT0ke0RCX05BTUU6LWxpYnJlbm1zfQogICAgICAtIERCX1VTRVI9JHtEQl9VU0VSOi1saWJyZW5tc30KICAgICAgLSBEQl9QQVNTV09SRD0ke0RCX1BBU1NXT1JEfQogICAgICAtIERCX1BPUlQ9MzMwNgogICAgICAtIERCX1RJTUVPVVQ9NjAKICAgICAgLSBSRURJU19IT1NUPSR7UkVESVNfSE9TVDotcmVkaXN9CiAgICAgIC0gUkVESVNfUEFTU1dPUkQ9JHtSRURJU19QQVNTV09SRH0KICAgICAgLSBTSURFQ0FSX0RJU1BBVENIRVI9MQogICAgdm9sdW1lczoKICAgICAgLSAuL2RhdGEvbGlicmVubXM6L2RhdGEKICAgICAgLSAuL2xvZ3MvbGlicmVubXM6L29wdC9saWJyZW5tcy9sb2dzCiAgICBkZXBlbmRzX29uOgogICAgICBsaWJyZW5tczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgICByZWRpczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQogICAgbmV0d29ya3M6CiAgICAgIC0gbGlicmVubXMtbmV0CgogICMgU3lzbG9nLW5nIHNpZGVjYXIgKG9mZmljaWFsIOKAlCBTSURFQ0FSX1NZU0xPR05HPTEsIFVEUCA1MTQpCiAgc3lzbG9nbmc6CiAgICBpbWFnZTogbGlicmVubXMvbGlicmVubXM6MjYuNy4wCiAgICBjb250YWluZXJfbmFtZTogbGlicmVubXMtc3lzbG9nbmcKICAgIGhvc3RuYW1lOiBsaWJyZW5tcy1zeXNsb2duZwogICAgY2FwX2FkZDoKICAgICAgLSBORVRfQURNSU4KICAgICAgLSBORVRfUkFXCiAgICByZXN0YXJ0OiB1bmxlc3Mtc3RvcHBlZAogICAgZW52aXJvbm1lbnQ6CiAgICAgIC0gVFo9JHtUWjotVVRDfQogICAgICAtIFBVSUQ9JHtQVUlEOi0xMDAwfQogICAgICAtIFBHSUQ9JHtQR0lEOi0xMDAwfQogICAgICAtIERCX0hPU1Q9ZGIKICAgICAgLSBEQl9OQU1FPSR7REJfTkFNRTotbGlicmVubXN9CiAgICAgIC0gREJfVVNFUj0ke0RCX1VTRVI6LWxpYnJlbm1zfQogICAgICAtIERCX1BBU1NXT1JEPSR7REJfUEFTU1dPUkR9CiAgICAgIC0gREJfUE9SVD0zMzA2CiAgICAgIC0gREJfVElNRU9VVD02MAogICAgICAtIFJFRElTX0hPU1Q9JHtSRURJU19IT1NUOi1yZWRpc30KICAgICAgLSBSRURJU19QQVNTV09SRD0ke1JFRElTX1BBU1NXT1JEfQogICAgICAtIFNJREVDQVJfU1lTTE9HTkc9MQogICAgdm9sdW1lczoKICAgICAgLSAuL2RhdGEvbGlicmVubXM6L2RhdGEKICAgICAgLSAuL2xvZ3MvbGlicmVubXM6L29wdC9saWJyZW5tcy9sb2dzCiAgICBwb3J0czoKICAgICAgLSAiNTE0OjUxNC91ZHAiCiAgICBkZXBlbmRzX29uOgogICAgICBsaWJyZW5tczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgICBkYjoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQogICAgbmV0d29ya3M6CiAgICAgIC0gbGlicmVubXMtbmV0CgogICMgU05NUCB0cmFwIHJlY2VpdmVyIChvZmZpY2lhbCDigJQgU0lERUNBUl9TTk1QVFJBUEQ9MSwgVURQIDE2MikKICBzbm1wdHJhcGQ6CiAgICBpbWFnZTogbGlicmVubXMvbGlicmVubXM6MjYuNy4wCiAgICBjb250YWluZXJfbmFtZTogbGlicmVubXMtc25tcHRyYXBkCiAgICBob3N0bmFtZTogbGlicmVubXMtc25tcHRyYXBkCiAgICBjYXBfYWRkOgogICAgICAtIE5FVF9BRE1JTgogICAgICAtIE5FVF9SQVcKICAgIHJlc3RhcnQ6IHVubGVzcy1zdG9wcGVkCiAgICBlbnZpcm9ubWVudDoKICAgICAgLSBUWj0ke1RaOi1VVEN9CiAgICAgIC0gUFVJRD0ke1BVSUQ6LTEwMDB9CiAgICAgIC0gUEdJRD0ke1BHSUQ6LTEwMDB9CiAgICAgIC0gREJfSE9TVD1kYgogICAgICAtIERCX05BTUU9JHtEQl9OQU1FOi1saWJyZW5tc30KICAgICAgLSBEQl9VU0VSPSR7REJfVVNFUjotbGlicmVubXN9CiAgICAgIC0gREJfUEFTU1dPUkQ9JHtEQl9QQVNTV09SRH0KICAgICAgLSBEQl9QT1JUPTMzMDYKICAgICAgLSBEQl9USU1FT1VUPTYwCiAgICAgIC0gUkVESVNfSE9TVD0ke1JFRElTX0hPU1Q6LXJlZGlzfQogICAgICAtIFJFRElTX1BBU1NXT1JEPSR7UkVESVNfUEFTU1dPUkR9CiAgICAgIC0gU0lERUNBUl9TTk1QVFJBUEQ9MQogICAgdm9sdW1lczoKICAgICAgLSAuL2RhdGEvbGlicmVubXM6L2RhdGEKICAgICAgLSAuL2xvZ3MvbGlicmVubXM6L29wdC9saWJyZW5tcy9sb2dzCiAgICBwb3J0czoKICAgICAgLSAiMTYyOjE2Mi91ZHAiCiAgICBkZXBlbmRzX29uOgogICAgICBsaWJyZW5tczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgICBkYjoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQogICAgbmV0d29ya3M6CiAgICAgIC0gbGlicmVubXMtbmV0CgogICMgTWFyaWFEQiAxMC4xMQogIGRiOgogICAgaW1hZ2U6IG1hcmlhZGI6MTAuMTEKICAgIGNvbnRhaW5lcl9uYW1lOiBsaWJyZW5tcy1kYgogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICAgIGVudmlyb25tZW50OgogICAgICAtIE1ZU1FMX1JPT1RfUEFTU1dPUkQ9JHtEQl9ST09UX1BBU1NXT1JEfQogICAgICAtIE1ZU1FMX0RBVEFCQVNFPSR7REJfTkFNRTotbGlicmVubXN9CiAgICAgIC0gTVlTUUxfVVNFUj0ke0RCX1VTRVI6LWxpYnJlbm1zfQogICAgICAtIE1ZU1FMX1BBU1NXT1JEPSR7REJfUEFTU1dPUkR9CiAgICAgIC0gVFo9JHtUWjotVVRDfQogICAgdm9sdW1lczoKICAgICAgLSAuL2RhdGEvZGI6L3Zhci9saWIvbXlzcWwKICAgIGNvbW1hbmQ6CiAgICAgIC0gLS1pbm5vZGItZmlsZS1wZXItdGFibGU9MQogICAgICAtIC0tbG93ZXItY2FzZS10YWJsZS1uYW1lcz0wCiAgICAgIC0gLS1jaGFyYWN0ZXItc2V0LXNlcnZlcj11dGY4bWI0CiAgICAgIC0gLS1jb2xsYXRpb24tc2VydmVyPXV0ZjhtYjRfdW5pY29kZV9jaQogICAgICAtIC0tbWF4X2FsbG93ZWRfcGFja2V0PTY0TQogICAgICAtIC0taW5ub2RiX2J1ZmZlcl9wb29sX3NpemU9MjU2TQogICAgaGVhbHRoY2hlY2s6CiAgICAgICMgT2ZmaWNpYWwgTWFyaWFEQiBpbWFnZSBoZWxwZXIg4oCUIG5vIHBhc3N3b3JkIG9uIHByb2Nlc3MgYXJndgogICAgICB0ZXN0OiBbIkNNRCIsICJoZWFsdGhjaGVjay5zaCIsICItLWNvbm5lY3QiLCAiLS1pbm5vZGJfaW5pdGlhbGl6ZWQiXQogICAgICBpbnRlcnZhbDogMTBzCiAgICAgIHRpbWVvdXQ6IDVzCiAgICAgIHJldHJpZXM6IDEwCiAgICAgIHN0YXJ0X3BlcmlvZDogMzBzCiAgICBuZXR3b3JrczoKICAgICAgLSBsaWJyZW5tcy1uZXQKCiAgIyBNZW1jYWNoZWQgKGNhY2hlIGJhY2tlbmQpCiAgbWVtY2FjaGVkOgogICAgaW1hZ2U6IG1lbWNhY2hlZDoxLjYtYWxwaW5lCiAgICBjb250YWluZXJfbmFtZTogbGlicmVubXMtbWVtY2FjaGVkCiAgICByZXN0YXJ0OiB1bmxlc3Mtc3RvcHBlZAogICAgY29tbWFuZDogLW0gNjQKICAgIG5ldHdvcmtzOgogICAgICAtIGxpYnJlbm1zLW5ldAogICAgaGVhbHRoY2hlY2s6CiAgICAgIHRlc3Q6IFsiQ01ELVNIRUxMIiwgImVjaG8gdmVyc2lvbiB8IG5jIDEyNy4wLjAuMSAxMTIxMSB8IGdyZXAgLXEgVkVSU0lPTiJdCiAgICAgIGludGVydmFsOiAxNXMKICAgICAgdGltZW91dDogNXMKICAgICAgcmV0cmllczogMwogICAgICBzdGFydF9wZXJpb2Q6IDEwcwoKICAjIFJlZGlzIChjYWNoZSArIHF1ZXVlIGJhY2tlbmQpIOKAlCBwYXNzd29yZCByZXF1aXJlZCBvbiB0aGUgYnJpZGdlIG5ldHdvcmsKICByZWRpczoKICAgIGltYWdlOiByZWRpczo3LWFscGluZQogICAgY29udGFpbmVyX25hbWU6IGxpYnJlbm1zLXJlZGlzCiAgICByZXN0YXJ0OiB1bmxlc3Mtc3RvcHBlZAogICAgZW52aXJvbm1lbnQ6CiAgICAgIC0gUkVESVNfUEFTU1dPUkQ9JHtSRURJU19QQVNTV09SRH0KICAgIGNvbW1hbmQ6CiAgICAgIC0gc2gKICAgICAgLSAtYwogICAgICAtIHJlZGlzLXNlcnZlciAtLXJlcXVpcmVwYXNzICIkJFJFRElTX1BBU1NXT1JEIiAtLW1heG1lbW9yeSAyNTZtYiAtLW1heG1lbW9yeS1wb2xpY3kgYWxsa2V5cy1scnUKICAgIHZvbHVtZXM6CiAgICAgIC0gLi9kYXRhL3JlZGlzOi9kYXRhCiAgICBuZXR3b3JrczoKICAgICAgLSBsaWJyZW5tcy1uZXQKICAgIGhlYWx0aGNoZWNrOgogICAgICB0ZXN0OiBbIkNNRC1TSEVMTCIsICJyZWRpcy1jbGkgLWEgXCIkJFJFRElTX1BBU1NXT1JEXCIgcGluZyB8IGdyZXAgLXEgUE9ORyJdCiAgICAgIGludGVydmFsOiAxNXMKICAgICAgdGltZW91dDogNXMKICAgICAgcmV0cmllczogMwogICAgICBzdGFydF9wZXJpb2Q6IDEwcwoKbmV0d29ya3M6CiAgbGlicmVubXMtbmV0OgogICAgZHJpdmVyOiBicmlkZ2UK"
+EMBEDDED_COMPOSE_B64="bmFtZTogbGlicmVubXMtZWFzeWRlcGxveQoKeC1saWJyZW5tcy1lbnZpcm9ubWVudDogJmxpYnJlbm1zLWVudmlyb25tZW50CiAgVFo6ICR7VFo6LVVUQ30KICBQVUlEOiAke1BVSUQ6LTEwMDB9CiAgUEdJRDogJHtQR0lEOi0xMDAwfQogIERCX0hPU1Q6IGRiCiAgREJfTkFNRTogJHtEQl9OQU1FOi1saWJyZW5tc30KICBEQl9VU0VSOiAke0RCX1VTRVI6LWxpYnJlbm1zfQogIERCX1BBU1NXT1JEOiAke0RCX1BBU1NXT1JEOj9EQl9QQVNTV09SRCBpcyByZXF1aXJlZH0KICBEQl9QT1JUOiAiMzMwNiIKICBEQl9USU1FT1VUOiAiNjAiCiAgUkVESVNfSE9TVDogJHtSRURJU19IT1NUOi1yZWRpc30KICBSRURJU19QQVNTV09SRDogJHtSRURJU19QQVNTV09SRDo/UkVESVNfUEFTU1dPUkQgaXMgcmVxdWlyZWR9CiAgQ0FDSEVfRFJJVkVSOiAke0NBQ0hFX0RSSVZFUjotcmVkaXN9CiAgU0VTU0lPTl9EUklWRVI6ICR7U0VTU0lPTl9EUklWRVI6LXJlZGlzfQogIExJQlJFTk1TX1NOTVBfQ09NTVVOSVRZOiAke0xJQlJFTk1TX1NOTVBfQ09NTVVOSVRZOj9MSUJSRU5NU19TTk1QX0NPTU1VTklUWSBpcyByZXF1aXJlZH0KCngtbGlicmVubXMtc2VydmljZTogJmxpYnJlbm1zLXNlcnZpY2UKICBpbWFnZTogbGlicmVubXMvbGlicmVubXM6MjYuNy4wCiAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICBjYXBfYWRkOgogICAgLSBORVRfQURNSU4KICAgIC0gTkVUX1JBVwogIHZvbHVtZXM6CiAgICAtIC4vZGF0YS9saWJyZW5tczovZGF0YQogIG5ldHdvcmtzOgogICAgLSBsaWJyZW5tcy1uZXQKICBsb2dnaW5nOgogICAgZHJpdmVyOiBqc29uLWZpbGUKICAgIG9wdGlvbnM6CiAgICAgIG1heC1zaXplOiAxMG0KICAgICAgbWF4LWZpbGU6ICIzIgoKc2VydmljZXM6CiAgbGlicmVubXM6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcwogICAgZW52aXJvbm1lbnQ6CiAgICAgIDw8OiAqbGlicmVubXMtZW52aXJvbm1lbnQKICAgICAgTElCUkVOTVNfQkFTRV9VUkw6ICR7TElCUkVOTVNfQkFTRV9VUkw6LS99CiAgICBwb3J0czoKICAgICAgLSAiODA6ODAwMCIKICAgIGRlcGVuZHNfb246CiAgICAgIGRiOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5CiAgICAgIHJlZGlzOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5CiAgICBoZWFsdGhjaGVjazoKICAgICAgdGVzdDogWyJDTUQiLCAiY3VybCIsICItZnNTIiwgImh0dHA6Ly9sb2NhbGhvc3Q6ODAwMC8iXQogICAgICBpbnRlcnZhbDogMTVzCiAgICAgIHRpbWVvdXQ6IDVzCiAgICAgIHJldHJpZXM6IDEyCiAgICAgIHN0YXJ0X3BlcmlvZDogOTBzCgogIGRpc3BhdGNoZXI6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcy1kaXNwYXRjaGVyCiAgICBlbnZpcm9ubWVudDoKICAgICAgPDw6ICpsaWJyZW5tcy1lbnZpcm9ubWVudAogICAgICBESVNQQVRDSEVSX05PREVfSUQ6IGRpc3BhdGNoZXIxCiAgICAgIFNJREVDQVJfRElTUEFUQ0hFUjogIjEiCiAgICBkZXBlbmRzX29uOgogICAgICBsaWJyZW5tczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQogICAgICByZWRpczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQoKICBzeXNsb2duZzoKICAgIDw8OiAqbGlicmVubXMtc2VydmljZQogICAgaG9zdG5hbWU6IGxpYnJlbm1zLXN5c2xvZ25nCiAgICBlbnZpcm9ubWVudDoKICAgICAgPDw6ICpsaWJyZW5tcy1lbnZpcm9ubWVudAogICAgICBTSURFQ0FSX1NZU0xPR05HOiAiMSIKICAgIHBvcnRzOgogICAgICAtICI1MTQ6NTE0L3RjcCIKICAgICAgLSAiNTE0OjUxNC91ZHAiCiAgICBkZXBlbmRzX29uOgogICAgICBsaWJyZW5tczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQogICAgICByZWRpczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2VfaGVhbHRoeQoKICBzbm1wdHJhcGQ6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcy1zbm1wdHJhcGQKICAgIGVudmlyb25tZW50OgogICAgICA8PDogKmxpYnJlbm1zLWVudmlyb25tZW50CiAgICAgIFNJREVDQVJfU05NUFRSQVBEOiAiMSIKICAgICAgU05NUF9VU0VSOiAke1NOTVBfVVNFUjotbGlicmVubXNfdXNlcn0KICAgICAgU05NUF9BVVRIOiAke1NOTVBfQVVUSDo/U05NUF9BVVRIIGlzIHJlcXVpcmVkfQogICAgICBTTk1QX1BSSVY6ICR7U05NUF9QUklWOj9TTk1QX1BSSVYgaXMgcmVxdWlyZWR9CiAgICAgIFNOTVBfRU5HSU5FSUQ6ICR7U05NUF9FTkdJTkVJRDo/U05NUF9FTkdJTkVJRCBpcyByZXF1aXJlZH0KICAgICAgU05NUF9ESVNBQkxFX0FVVEhPUklaQVRJT046ICR7U05NUF9ESVNBQkxFX0FVVEhPUklaQVRJT046LW5vfQogICAgcG9ydHM6CiAgICAgIC0gIjE2MjoxNjIvdGNwIgogICAgICAtICIxNjI6MTYyL3VkcCIKICAgIGRlcGVuZHNfb246CiAgICAgIGxpYnJlbm1zOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5CiAgICAgIHJlZGlzOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9oZWFsdGh5CgogIGRiOgogICAgaW1hZ2U6IG1hcmlhZGI6MTAuMTEKICAgIHJlc3RhcnQ6IHVubGVzcy1zdG9wcGVkCiAgICBlbnZpcm9ubWVudDoKICAgICAgVFo6ICR7VFo6LVVUQ30KICAgICAgTUFSSUFEQl9ST09UX1BBU1NXT1JEOiAke0RCX1JPT1RfUEFTU1dPUkQ6P0RCX1JPT1RfUEFTU1dPUkQgaXMgcmVxdWlyZWR9CiAgICAgIE1BUklBREJfREFUQUJBU0U6ICR7REJfTkFNRTotbGlicmVubXN9CiAgICAgIE1BUklBREJfVVNFUjogJHtEQl9VU0VSOi1saWJyZW5tc30KICAgICAgTUFSSUFEQl9QQVNTV09SRDogJHtEQl9QQVNTV09SRDo/REJfUEFTU1dPUkQgaXMgcmVxdWlyZWR9CiAgICB2b2x1bWVzOgogICAgICAtIC4vZGF0YS9kYjovdmFyL2xpYi9teXNxbAogICAgY29tbWFuZDoKICAgICAgLSAtLWlubm9kYi1maWxlLXBlci10YWJsZT0xCiAgICAgIC0gLS1sb3dlci1jYXNlLXRhYmxlLW5hbWVzPTAKICAgICAgLSAtLWNoYXJhY3Rlci1zZXQtc2VydmVyPXV0ZjhtYjQKICAgICAgLSAtLWNvbGxhdGlvbi1zZXJ2ZXI9dXRmOG1iNF91bmljb2RlX2NpCiAgICAgIC0gLS1tYXgtYWxsb3dlZC1wYWNrZXQ9NjRNCiAgICAgIC0gLS1pbm5vZGItYnVmZmVyLXBvb2wtc2l6ZT0yNTZNCiAgICBoZWFsdGhjaGVjazoKICAgICAgdGVzdDogWyJDTUQiLCAiaGVhbHRoY2hlY2suc2giLCAiLS1jb25uZWN0IiwgIi0taW5ub2RiX2luaXRpYWxpemVkIl0KICAgICAgaW50ZXJ2YWw6IDEwcwogICAgICB0aW1lb3V0OiA1cwogICAgICByZXRyaWVzOiAxMgogICAgICBzdGFydF9wZXJpb2Q6IDMwcwogICAgbmV0d29ya3M6CiAgICAgIC0gbGlicmVubXMtbmV0CiAgICBsb2dnaW5nOgogICAgICBkcml2ZXI6IGpzb24tZmlsZQogICAgICBvcHRpb25zOgogICAgICAgIG1heC1zaXplOiAxMG0KICAgICAgICBtYXgtZmlsZTogIjMiCgogIHJlZGlzOgogICAgaW1hZ2U6IHJlZGlzOjcuMi1hbHBpbmUKICAgIHJlc3RhcnQ6IHVubGVzcy1zdG9wcGVkCiAgICBlbnZpcm9ubWVudDoKICAgICAgUkVESVNfUEFTU1dPUkQ6ICR7UkVESVNfUEFTU1dPUkQ6P1JFRElTX1BBU1NXT1JEIGlzIHJlcXVpcmVkfQogICAgY29tbWFuZDoKICAgICAgLSAvYmluL3NoCiAgICAgIC0gLWVjCiAgICAgIC0gfAogICAgICAgIHVtYXNrIDA3NwogICAgICAgIHsKICAgICAgICAgIHByaW50ZiAncmVxdWlyZXBhc3MgJXNcbicgIiQkUkVESVNfUEFTU1dPUkQiCiAgICAgICAgICBwcmludGYgJ21heG1lbW9yeSA1MTJtYlxuJwogICAgICAgICAgcHJpbnRmICdtYXhtZW1vcnktcG9saWN5IG5vZXZpY3Rpb25cbicKICAgICAgICAgIHByaW50ZiAnYXBwZW5kb25seSB5ZXNcbicKICAgICAgICB9ID4vdG1wL3JlZGlzLmNvbmYKICAgICAgICBleGVjIHJlZGlzLXNlcnZlciAvdG1wL3JlZGlzLmNvbmYKICAgIHZvbHVtZXM6CiAgICAgIC0gLi9kYXRhL3JlZGlzOi9kYXRhCiAgICBoZWFsdGhjaGVjazoKICAgICAgdGVzdDogWyJDTUQtU0hFTEwiLCAiUkVESVNDTElfQVVUSD1cIiQkUkVESVNfUEFTU1dPUkRcIiByZWRpcy1jbGkgcGluZyB8IGdyZXAgLXEgUE9ORyJdCiAgICAgIGludGVydmFsOiAxMHMKICAgICAgdGltZW91dDogNXMKICAgICAgcmV0cmllczogMTIKICAgICAgc3RhcnRfcGVyaW9kOiAxMHMKICAgIG5ldHdvcmtzOgogICAgICAtIGxpYnJlbm1zLW5ldAogICAgbG9nZ2luZzoKICAgICAgZHJpdmVyOiBqc29uLWZpbGUKICAgICAgb3B0aW9uczoKICAgICAgICBtYXgtc2l6ZTogMTBtCiAgICAgICAgbWF4LWZpbGU6ICIzIgoKbmV0d29ya3M6CiAgbGlicmVubXMtbmV0OgogICAgZHJpdmVyOiBicmlkZ2UK"
 
 extract_docker_compose() {
   # Use the base64-encoded compose file embedded in the variable above
@@ -99,11 +120,67 @@ sys.stdout.buffer.write(base64.b64decode(b64))
 #-------------------------- Validation helpers --------------------------
 validate_url() {
   local url="$1"
-  [[ "$url" =~ ^https?://[a-zA-Z0-9.-]+(:[0-9]+)?(/.*)?$ ]] || die "Invalid URL format: $url (must be http://host or https://host)"
+  command -v python3 &>/dev/null || die "python3 is required for URL validation"
+  python3 - "$url" <<'PY' || die "Invalid URL: $url (use http[s]://host[:port] with no path, query, credentials, or fragment)"
+import sys
+import ipaddress
+import re
+from urllib.parse import urlsplit
+
+value = sys.argv[1]
+try:
+    parsed = urlsplit(value)
+    port = parsed.port
+except ValueError:
+    raise SystemExit(1)
+
+host = parsed.hostname or ""
+try:
+    ipaddress.ip_address(host)
+    valid_host = True
+except ValueError:
+    valid_host = bool(re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", host
+    )) and ".." not in host
+
+valid = (
+    parsed.scheme in {"http", "https"}
+    and valid_host
+    and parsed.username is None
+    and parsed.password is None
+    and parsed.path in {"", "/"}
+    and not parsed.query
+    and not parsed.fragment
+    and (port is None or 1 <= port <= 65535)
+    and not any(char.isspace() or ord(char) < 32 for char in value)
+)
+raise SystemExit(0 if valid else 1)
+PY
 }
 
 validate_timezone() {
-  [[ -f "/usr/share/zoneinfo/$1" ]] || warn "Timezone '$1' may not be valid (not found in /usr/share/zoneinfo)"
+  [[ "$1" =~ ^[a-zA-Z0-9_+-]+(/[a-zA-Z0-9_+-]+)*$ && "$1" != *".."* ]] ||
+    die "Invalid timezone '$1'"
+  if [[ -d /usr/share/zoneinfo && ! -f "/usr/share/zoneinfo/$1" ]]; then
+    die "Invalid timezone '$1' (not found in /usr/share/zoneinfo)"
+  fi
+}
+
+validate_identifier() {
+  local label="$1" value="$2"
+  [[ "$value" =~ ^[a-zA-Z0-9_]+$ ]] ||
+    die "$label may contain only letters, numbers, and underscores"
+}
+
+validate_secret() {
+  local label="$1" value="$2"
+  [[ ${#value} -ge 12 && "$value" =~ ^[a-zA-Z0-9._-]+$ ]] ||
+    die "$label must be at least 12 characters using only letters, numbers, dot, underscore, or hyphen"
+}
+
+validate_email() {
+  [[ "$1" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]] ||
+    die "Invalid admin email: $1"
 }
 
 backup_file() {
@@ -123,15 +200,30 @@ load_env() {
     key=$(echo "$key" | tr -d '[:space:]')
     case "$key" in
     TZ | PUID | PGID | BASE_URL | DB_NAME | DB_USER | DB_PASSWORD | DB_ROOT_PASSWORD | \
-      MEMCACHED_HOST | REDIS_HOST | REDIS_PASSWORD | POLLERS | CACHE_DRIVER | SESSION_DRIVER | \
+      REDIS_HOST | REDIS_PASSWORD | POLLERS | CACHE_DRIVER | SESSION_DRIVER | \
+      LIBRENMS_SNMP_COMMUNITY | SNMP_USER | SNMP_AUTH | SNMP_PRIV | SNMP_ENGINEID | \
       ADMIN_PASS | ADMIN_EMAIL)
+      val="${val%$'\r'}"
       # Only import when the variable is not already set by CLI/env
       if [[ -z "${!key:-}" ]]; then
-        export "$key=$val"
+        printf -v "$key" '%s' "$val"
+        export "${key?}"
       fi
       ;;
     esac
   done <"$env_file"
+}
+
+read_env_value() {
+  local env_file="$1" wanted="$2" key val
+  [[ -f "$env_file" ]] || return 1
+  while IFS='=' read -r key val; do
+    if [[ "$key" == "$wanted" ]]; then
+      printf '%s' "${val%$'\r'}"
+      return 0
+    fi
+  done <"$env_file"
+  return 1
 }
 
 #-------------------------- Help ----------------------------------------
@@ -152,13 +244,13 @@ Options:
   -p, --pollers N            Number of pollers (default: 16, range: 1-64)
   -s, --save-creds FILE      Save generated credentials to file (chmod 600)
   -n, --non-interactive      Run without prompts (requires --url)
-  -f, --force                Overwrite existing .env (backs up first; regenerates secrets)
+  -f, --force                Rewrite existing .env after backup (preserves loaded secrets)
   -D, --dry-run              Show actions without executing
   --no-firewall              Skip UFW firewall configuration
   --no-ssl                   Accepted for compatibility; stack is always HTTP-only
   --emit-env FILE            Write generated .env to FILE and exit (no Docker/root)
-  --db-name NAME             Database name (default: librenms)
-  --db-user USER             Database user (default: librenms)
+  --db-name NAME             Database name (letters, numbers, underscore)
+  --db-user USER             Database user (letters, numbers, underscore)
 
 TLS is not configured by this installer. Put nginx, Caddy, or Traefik in front.
 
@@ -179,23 +271,27 @@ while [[ $# -gt 0 ]]; do
   -d | --dir)
     [[ -z "${2:-}" || "$2" == -* ]] && die "Option --dir requires a directory path"
     INSTALL_DIR="$2"
+    DIR_SET=true
     shift 2
     ;;
   -u | --url)
     [[ -z "${2:-}" || "$2" == -* ]] && die "Option --url requires a URL"
     BASE_URL="$2"
+    URL_SET=true
     validate_url "$BASE_URL"
     shift 2
     ;;
   -t | --timezone)
     [[ -z "${2:-}" || "$2" == -* ]] && die "Option --timezone requires a timezone"
     TZ="$2"
+    TZ_SET=true
     validate_timezone "$TZ"
     shift 2
     ;;
   -p | --pollers)
     [[ -z "${2:-}" || "$2" == -* ]] && die "Option --pollers requires a number"
     POLLERS="$2"
+    POLLERS_SET=true
     shift 2
     ;;
   -s | --save-creds)
@@ -234,11 +330,13 @@ while [[ $# -gt 0 ]]; do
   --db-name)
     [[ -z "${2:-}" || "$2" == -* ]] && die "Option --db-name requires a name"
     DB_NAME="$2"
+    DB_NAME_SET=true
     shift 2
     ;;
   --db-user)
     [[ -z "${2:-}" || "$2" == -* ]] && die "Option --db-user requires a user"
     DB_USER="$2"
+    DB_USER_SET=true
     shift 2
     ;;
   --)
@@ -249,14 +347,59 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+#-------------------------- Existing config and defaults ----------------
+# Loading happens after CLI parsing so explicit flags win, but before defaults
+# so idempotent reruns retain every prior setting.
+EXISTING_ENV="$INSTALL_DIR/.env"
+HAD_EXISTING_ENV=false
+[[ -f "$EXISTING_ENV" ]] && HAD_EXISTING_ENV=true
+if [[ -z "$EMIT_ENV" || "$DIR_SET" == true ]]; then
+  load_env "$EXISTING_ENV"
+fi
+
+TZ="${TZ:-UTC}"
+PUID="${PUID:-1000}"
+PGID="${PGID:-1000}"
+DB_NAME="${DB_NAME:-librenms}"
+DB_USER="${DB_USER:-librenms}"
+REDIS_HOST="${REDIS_HOST:-redis}"
+POLLERS="${POLLERS:-16}"
+CACHE_DRIVER="${CACHE_DRIVER:-redis}"
+SESSION_DRIVER="${SESSION_DRIVER:-redis}"
+SNMP_USER="${SNMP_USER:-librenms_user}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@librenms.local}"
+if [[ "$DRY_RUN" == true && "$NON_INTERACTIVE" == false && -z "$BASE_URL" ]]; then
+  BASE_URL="http://localhost"
+fi
+
 #-------------------------- Validation ----------------------------------
-[[ "$NON_INTERACTIVE" == true && -z "$BASE_URL" ]] && die "Non-interactive mode requires --url"
-if ! [[ "$POLLERS" =~ ^[0-9]+$ ]] || [ "$POLLERS" -lt 1 ] || [ "$POLLERS" -gt 64 ]; then
+[[ "$NON_INTERACTIVE" == true && -z "$BASE_URL" ]] &&
+  die "Non-interactive mode requires --url (or BASE_URL in an existing .env)"
+validate_timezone "$TZ"
+validate_identifier "Database name" "$DB_NAME"
+validate_identifier "Database user" "$DB_USER"
+validate_identifier "SNMP user" "$SNMP_USER"
+[[ "$PUID" =~ ^[0-9]+$ && "$PGID" =~ ^[0-9]+$ ]] ||
+  die "PUID and PGID must be non-negative integers"
+if ! [[ "$POLLERS" =~ ^[0-9]+$ ]] || ((POLLERS < 1 || POLLERS > 64)); then
   die "Pollers must be 1-64"
 fi
 
+if [[ "$HAD_EXISTING_ENV" == true ]]; then
+  if [[ "$DB_NAME_SET" == true ]]; then
+    EXISTING_DB_NAME="$(read_env_value "$EXISTING_ENV" DB_NAME || true)"
+    [[ "$DB_NAME" == "$EXISTING_DB_NAME" ]] ||
+      die "Database name cannot be changed on an existing install"
+  fi
+  if [[ "$DB_USER_SET" == true ]]; then
+    EXISTING_DB_USER="$(read_env_value "$EXISTING_ENV" DB_USER || true)"
+    [[ "$DB_USER" == "$EXISTING_DB_USER" ]] ||
+      die "Database user cannot be changed on an existing install"
+  fi
+fi
+
 #-------------------------- Interactive prompts -------------------------
-if [[ "$NON_INTERACTIVE" == false ]]; then
+if [[ "$NON_INTERACTIVE" == false && "$DRY_RUN" == false ]]; then
   [[ -z "$BASE_URL" ]] && {
     read -rp "Base URL (e.g., http://librenms.example.com): " BASE_URL
     validate_url "$BASE_URL"
@@ -271,47 +414,63 @@ if [[ "$NON_INTERACTIVE" == false ]]; then
   fi
 fi
 
-#-------------------------- Load existing .env (idempotent reruns) ------
-# If an install already exists, reuse its credentials instead of
-# generating new ones. This keeps reruns fully idempotent: DB passwords
-# and the admin password survive reruns unless --force is used.
-load_env "$INSTALL_DIR/.env"
-
 #-------------------------- Password generation -------------------------
 DB_PASSWORD="${DB_PASSWORD:-$(gen_pass 32)}"
 DB_ROOT_PASSWORD="${DB_ROOT_PASSWORD:-$(gen_pass 32)}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-$(gen_pass 32)}"
-ADMIN_PASS="${ADMIN_PASS:-$(gen_pass 16)}"
-[[ -z "$ADMIN_EMAIL" ]] && {
-  DOMAIN="${BASE_URL#*://}"
-  DOMAIN="${DOMAIN%%/*}"
-  DOMAIN="${DOMAIN%%:*}"
-  ADMIN_EMAIL="admin@${DOMAIN:-librenms.local}"
-}
+if [[ "$HAD_EXISTING_ENV" == false ]]; then
+  ADMIN_PASS="${ADMIN_PASS:-$(gen_pass 24)}"
+fi
+LIBRENMS_SNMP_COMMUNITY="${LIBRENMS_SNMP_COMMUNITY:-$(gen_pass 24)}"
+SNMP_AUTH="${SNMP_AUTH:-$(gen_pass 24)}"
+SNMP_PRIV="${SNMP_PRIV:-$(gen_pass 24)}"
+SNMP_ENGINEID="${SNMP_ENGINEID:-$(gen_hex 10)}"
+validate_secret "Database password" "$DB_PASSWORD"
+validate_secret "Database root password" "$DB_ROOT_PASSWORD"
+validate_secret "Redis password" "$REDIS_PASSWORD"
+validate_secret "SNMP community" "$LIBRENMS_SNMP_COMMUNITY"
+validate_secret "SNMP authentication password" "$SNMP_AUTH"
+validate_secret "SNMP privacy password" "$SNMP_PRIV"
+[[ -z "$ADMIN_PASS" ]] || validate_secret "Admin password" "$ADMIN_PASS"
+[[ "$SNMP_ENGINEID" =~ ^[a-fA-F0-9]{10,64}$ ]] ||
+  die "SNMP engine ID must be 10-64 hexadecimal characters"
+validate_email "$ADMIN_EMAIL"
 
 #-------------------------- Write .env helper (no printf %s traps) -------
 write_env_file() {
-  local dest="$1"
-  cat >"$dest" <<EOF
+  local dest="$1" temp="${1}.tmp.$$"
+  if ! (
+    umask 077 && cat >"$temp" <<EOF
 # LibreNMS Docker Compose Environment
 # Generated by librenms-auto-install.sh on $(date)
 TZ=${TZ}
 PUID=${PUID}
 PGID=${PGID}
 BASE_URL=${BASE_URL}
+LIBRENMS_BASE_URL=/
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
 DB_PASSWORD=${DB_PASSWORD}
 DB_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
-MEMCACHED_HOST=${MEMCACHED_HOST}
 REDIS_HOST=${REDIS_HOST}
 REDIS_PASSWORD=${REDIS_PASSWORD}
 POLLERS=${POLLERS}
-CACHE_DRIVER=${CACHE_DRIVER:-redis}
-SESSION_DRIVER=${SESSION_DRIVER:-redis}
+CACHE_DRIVER=${CACHE_DRIVER}
+SESSION_DRIVER=${SESSION_DRIVER}
+LIBRENMS_SNMP_COMMUNITY=${LIBRENMS_SNMP_COMMUNITY}
+SNMP_USER=${SNMP_USER}
+SNMP_AUTH=${SNMP_AUTH}
+SNMP_PRIV=${SNMP_PRIV}
+SNMP_ENGINEID=${SNMP_ENGINEID}
+SNMP_DISABLE_AUTHORIZATION=no
 ADMIN_PASS=${ADMIN_PASS}
 ADMIN_EMAIL=${ADMIN_EMAIL}
 EOF
+  ); then
+    rm -f -- "$temp"
+    die "Could not write environment file: $dest"
+  fi
+  mv -f -- "$temp" "$dest"
 }
 
 # Test/CI helper: emit .env without root or Docker
@@ -335,8 +494,8 @@ if [[ "$DRY_RUN" == true ]]; then
     info "SSL: always HTTP-only"
   fi
   info "Creds file: ${SAVE_CREDS:-<not saved>}"
-  info "Would create: $INSTALL_DIR/{data,logs,config,rrd}"
-  info "Would copy docker-compose.yml, create .env, start services"
+  info "Would create: $INSTALL_DIR/data/{librenms/config,db,redis}"
+  info "Would install docker-compose.yml, create/update .env, start services"
   info "=== DRY-RUN COMPLETE ==="
   exit 0
 fi
@@ -344,38 +503,62 @@ fi
 #-------------------------- Pre-flight checks --------------------------
 [[ $EUID -ne 0 ]] && die "This script must be run as root (use sudo)"
 command -v docker &>/dev/null || die "Docker is not installed. Install Docker first."
-if docker compose version &>/dev/null; then
-  DOCKER_COMPOSE="docker compose"
-elif command -v docker-compose &>/dev/null; then
-  DOCKER_COMPOSE="docker-compose"
-else
-  die "Docker Compose v2 is not installed."
+docker info &>/dev/null || die "Docker daemon is not available"
+docker compose version &>/dev/null || die "Docker Compose v2 is not installed."
+DOCKER_COMPOSE=(docker compose)
+
+command -v flock &>/dev/null || die "flock is required (provided by util-linux)"
+exec 9>/var/lock/librenms-easydeploy.lock
+flock -n 9 || die "Another LibreNMS EasyDeploy installer is already running"
+
+if [[ -n "$SAVE_CREDS" && "$SAVE_CREDS" != /* ]]; then
+  SAVE_CREDS="$(pwd)/$SAVE_CREDS"
 fi
 
 #-------------------------- Install directory ---------------------------
-mkdir -p "$INSTALL_DIR"/{data/{librenms,db,redis},logs/librenms,config/librenms,rrd}
+mkdir -p "$INSTALL_DIR"/data/{librenms/config,db,redis}
 cd "$INSTALL_DIR" || die "Cannot access $INSTALL_DIR"
 
-# Use embedded docker-compose.yml for curl|bash mode; otherwise copy from script dir
-if [[ -f docker-compose.yml ]]; then
-  info "Using existing docker-compose.yml"
+# The installer owns docker-compose.yml. Refresh it on upgrades while keeping a
+# timestamped backup; local customizations belong in docker-compose.override.yml.
+COMPOSE_TEMP=".docker-compose.yml.tmp.$$"
+extract_docker_compose >"$COMPOSE_TEMP"
+if [[ -f docker-compose.yml ]] && cmp -s docker-compose.yml "$COMPOSE_TEMP"; then
+  rm -f "$COMPOSE_TEMP"
+  info "docker-compose.yml is current"
 else
-  info "Extracting embedded docker-compose.yml"
-  extract_docker_compose >docker-compose.yml
+  backup_file docker-compose.yml
+  mv -f "$COMPOSE_TEMP" docker-compose.yml
+  chmod 644 docker-compose.yml
+  info "Installed current docker-compose.yml"
 fi
 
 #-------------------------- Environment file (idempotent) ---------------
-if [[ -f .env && "$FORCE" == true ]]; then
+CONFIG_CHANGED=false
+if [[ -f .env ]]; then
+  if [[ "$URL_SET" == true && "$BASE_URL" != "$(read_env_value .env BASE_URL || true)" ]] ||
+    [[ "$TZ_SET" == true && "$TZ" != "$(read_env_value .env TZ || true)" ]] ||
+    [[ "$POLLERS_SET" == true && "$POLLERS" != "$(read_env_value .env POLLERS || true)" ]] ||
+    [[ "$(read_env_value .env SNMP_DISABLE_AUTHORIZATION || true)" == "yes" ]]; then
+    CONFIG_CHANGED=true
+  fi
+fi
+
+if [[ -f .env && ("$FORCE" == true || "$CONFIG_CHANGED" == true) ]]; then
   backup_file .env
   write_env_file .env
   chmod 600 .env
-  info "Overwrote .env (--force) — chmod 600"
+  info "Updated .env (previous file backed up) — chmod 600"
 elif [[ -f .env && "$FORCE" == false ]]; then
   # Preserve existing .env; append any missing keys (e.g., REDIS_PASSWORD
   # from a pre-hardening install)
-  for key in CACHE_DRIVER SESSION_DRIVER ADMIN_PASS ADMIN_EMAIL REDIS_PASSWORD; do
+  for key in CACHE_DRIVER SESSION_DRIVER ADMIN_EMAIL REDIS_PASSWORD \
+    LIBRENMS_SNMP_COMMUNITY SNMP_USER SNMP_AUTH SNMP_PRIV SNMP_ENGINEID; do
     grep -q "^${key}=" .env 2>/dev/null || echo "${key}=${!key}" >>.env
   done
+  grep -q '^LIBRENMS_BASE_URL=' .env 2>/dev/null || echo 'LIBRENMS_BASE_URL=/' >>.env
+  grep -q '^SNMP_DISABLE_AUTHORIZATION=' .env 2>/dev/null ||
+    echo 'SNMP_DISABLE_AUTHORIZATION=no' >>.env
   chmod 600 .env
   info ".env already exists — preserving (use --force to overwrite)"
 else
@@ -384,32 +567,52 @@ else
   info "Created .env (chmod 600)"
 fi
 
-#-------------------------- Save credentials ----------------------------
-if [[ -n "$SAVE_CREDS" ]]; then
-  {
+"${DOCKER_COMPOSE[@]}" config --quiet ||
+  die "Generated Docker Compose configuration is invalid"
+
+#-------------------------- Credentials helper ---------------------------
+write_credentials_file() {
+  local destination="$1"
+  (umask 077 && {
     echo "# LibreNMS credentials generated on $(date)"
     echo "MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}"
     echo "MYSQL_DATABASE=${DB_NAME}"
     echo "MYSQL_USER=${DB_USER}"
     echo "MYSQL_PASSWORD=${DB_PASSWORD}"
+    echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
     echo "BASE_URL=${BASE_URL}"
     echo "TZ=${TZ}"
     echo "ADMIN_USER=admin"
-    echo "ADMIN_PASSWORD=${ADMIN_PASS}"
+    [[ -n "$ADMIN_PASS" ]] && echo "ADMIN_PASSWORD=${ADMIN_PASS}"
     echo "ADMIN_EMAIL=${ADMIN_EMAIL}"
-  } >"$SAVE_CREDS"
-  chmod 600 "$SAVE_CREDS"
-  info "Credentials saved to $SAVE_CREDS (chmod 600)"
-fi
+    echo "SNMP_COMMUNITY=${LIBRENMS_SNMP_COMMUNITY}"
+    echo "SNMP_V3_USER=${SNMP_USER}"
+    echo "SNMP_V3_AUTH_PASSWORD=${SNMP_AUTH}"
+    echo "SNMP_V3_PRIV_PASSWORD=${SNMP_PRIV}"
+    echo "SNMP_ENGINE_ID=${SNMP_ENGINEID}"
+  } >"$destination") || die "Could not write credentials file: $destination"
+  chmod 600 "$destination"
+}
 
 #-------------------------- Volume permissions --------------------------
 info "Setting volume permissions (PUID=$PUID, PGID=$PGID)..."
-chown -R "$PUID:$PGID" "$INSTALL_DIR"/data "$INSTALL_DIR"/logs "$INSTALL_DIR"/config "$INSTALL_DIR"/rrd 2>/dev/null || true
+chown -R "$PUID:$PGID" "$INSTALL_DIR/data/librenms"
+
+# Syslog ingestion must be enabled in LibreNMS as well as in the sidecar.
+SYSLOG_CONFIG="$INSTALL_DIR/data/librenms/config/syslog.yaml"
+if [[ ! -e "$SYSLOG_CONFIG" ]]; then
+  printf 'enable_syslog: true\n' >"$SYSLOG_CONFIG"
+  chown "$PUID:$PGID" "$SYSLOG_CONFIG"
+  chmod 640 "$SYSLOG_CONFIG"
+  info "Enabled LibreNMS syslog ingestion"
+fi
 
 #-------------------------- Firewall ------------------------------------
 if [[ "$SKIP_FIREWALL" == false ]] && command -v ufw &>/dev/null; then
   ufw allow 80/tcp comment 'LibreNMS HTTP'
+  ufw allow 162/tcp comment 'LibreNMS SNMP-Trap TCP'
   ufw allow 162/udp comment 'LibreNMS SNMP-Trap'
+  ufw allow 514/tcp comment 'LibreNMS Syslog TCP'
   ufw allow 514/udp comment 'LibreNMS Syslog'
   # SNMP polling is outbound from this host; no inbound 161/udp rule needed
   info "UFW rules added (run 'ufw enable' to activate)"
@@ -423,11 +626,12 @@ fi
 info "Starting Docker Compose services..."
 info "NOTE: This deployment serves HTTP only. For HTTPS, place a reverse proxy"
 info "(nginx, Traefik, Caddy) in front of the container on port 80."
-$DOCKER_COMPOSE up -d
+"${DOCKER_COMPOSE[@]}" up -d --remove-orphans
 
 info "Waiting for database to be ready..."
 for i in $(seq 1 60); do
-  if $DOCKER_COMPOSE exec -T -e MYSQL_PWD="${DB_ROOT_PASSWORD}" db mysqladmin ping -h"localhost" -u"root" &>/dev/null; then
+  if "${DOCKER_COMPOSE[@]}" exec -T -e MYSQL_PWD="${DB_ROOT_PASSWORD}" db \
+    mariadb-admin ping -hlocalhost -uroot --silent &>/dev/null; then
     info "Database is ready"
     break
   fi
@@ -437,7 +641,8 @@ done
 
 info "Waiting for Redis to be ready..."
 for i in $(seq 1 30); do
-  if $DOCKER_COMPOSE exec -T -e REDISCLI_AUTH="${REDIS_PASSWORD}" redis redis-cli ping 2>/dev/null | grep -q PONG; then
+  if "${DOCKER_COMPOSE[@]}" exec -T -e REDISCLI_AUTH="${REDIS_PASSWORD}" redis \
+    redis-cli ping 2>/dev/null | grep -q PONG; then
     info "Redis is ready"
     break
   fi
@@ -445,43 +650,79 @@ for i in $(seq 1 30); do
   [[ $i -eq 30 ]] && die "Redis did not become ready in time"
 done
 
-info "Waiting for Memcached to be ready..."
-for i in $(seq 1 30); do
-  if $DOCKER_COMPOSE exec -T memcached sh -c 'echo stats | nc 127.0.0.1 11211 | grep -q "STAT"' 2>/dev/null; then
-    info "Memcached is ready"
-    break
-  fi
-  sleep 2
-  [[ $i -eq 30 ]] && die "Memcached did not become ready in time"
-done
-
 info "Waiting for LibreNMS web UI to be ready..."
-for i in $(seq 1 60); do
-  if $DOCKER_COMPOSE exec -T librenms curl -f http://localhost:8000 &>/dev/null; then
+for i in $(seq 1 120); do
+  if "${DOCKER_COMPOSE[@]}" exec -T librenms \
+    curl -fsS http://localhost:8000/ &>/dev/null; then
     info "LibreNMS web UI is ready"
     break
   fi
   sleep 3
-  [[ $i -eq 60 ]] && die "LibreNMS did not become ready in time"
+  [[ $i -eq 120 ]] && {
+    "${DOCKER_COMPOSE[@]}" logs --tail=80 librenms >&2 || true
+    die "LibreNMS did not become ready in time"
+  }
 done
 
-#-------------------------- Initialize (idempotent) --------------------
-info "Running database migrations..."
-$DOCKER_COMPOSE exec -T librenms php /opt/librenms/artisan migrate --force || warn "Migration had warnings"
-info "Seeding database..."
-$DOCKER_COMPOSE exec -T librenms php /opt/librenms/artisan librenms:seed || warn "Seed had warnings"
+# The official container performs migrations and seeding during startup.
+# Configure the dispatcher worker count through the supported LibreNMS setting.
+info "Configuring dispatcher poller workers ($POLLERS)..."
+"${DOCKER_COMPOSE[@]}" exec -T --user librenms librenms \
+  lnms config:set service_poller_workers "$POLLERS" --no-interaction ||
+  die "Could not configure dispatcher poller workers"
+"${DOCKER_COMPOSE[@]}" exec -T --user librenms librenms \
+  lnms config:set enable_syslog true --no-interaction ||
+  die "Could not enable LibreNMS syslog ingestion"
 
-# Create admin user only if it doesn't already exist (idempotent)
+# Create the admin only if it does not already exist.
 info "Checking for existing admin user..."
-ADMIN_EXISTS=$($DOCKER_COMPOSE exec -T -e MYSQL_PWD="$DB_PASSWORD" librenms mysql -hdb -u"$DB_USER" "$DB_NAME" -e "SELECT COUNT(*) FROM users WHERE username='admin';" 2>/dev/null | tail -1)
-ADMIN_EXISTS=${ADMIN_EXISTS:-0}
-if [[ "$ADMIN_EXISTS" -gt 0 ]]; then
+if ! ADMIN_EXISTS=$(
+  "${DOCKER_COMPOSE[@]}" exec -T -e MYSQL_PWD="$DB_PASSWORD" db \
+    mariadb -u"$DB_USER" "$DB_NAME" --batch --skip-column-names \
+    -e "SELECT COUNT(*) FROM users WHERE username='admin' AND auth_type='mysql';" 2>/dev/null
+); then
+  die "Could not query the LibreNMS users table"
+fi
+ADMIN_EXISTS="${ADMIN_EXISTS//$'\r'/}"
+if [[ "$ADMIN_EXISTS" =~ ^[1-9][0-9]*$ ]]; then
   info "Admin user already exists — preserving credentials"
+  if [[ -z "$ADMIN_PASS" ]]; then
+    warn "Admin password is not stored in .env; existing login credentials are unchanged"
+  fi
 else
+  if [[ -z "$ADMIN_PASS" ]]; then
+    ADMIN_PASS="$(gen_pass 24)"
+    if grep -q '^ADMIN_PASS=' .env; then
+      sed -i "s/^ADMIN_PASS=.*/ADMIN_PASS=${ADMIN_PASS}/" .env
+    else
+      echo "ADMIN_PASS=${ADMIN_PASS}" >>.env
+    fi
+    chmod 600 .env
+  fi
   info "Creating admin user..."
-  $DOCKER_COMPOSE exec -T librenms php /opt/librenms/artisan librenms:adduser \
-    --name="admin" --pass="$ADMIN_PASS" --email="$ADMIN_EMAIL" --role=10 ||
-    warn "Admin user creation failed"
+  # Variables intentionally expand in the inner container shell, not here.
+  # shellcheck disable=SC2016
+  if ! "${DOCKER_COMPOSE[@]}" exec -T --user librenms \
+    -e LIBRENMS_ADMIN_PASSWORD="$ADMIN_PASS" \
+    -e LIBRENMS_ADMIN_EMAIL="$ADMIN_EMAIL" librenms sh -c \
+    'lnms user:add admin --password="$LIBRENMS_ADMIN_PASSWORD" --email="$LIBRENMS_ADMIN_EMAIL" --role=admin --no-interaction'; then
+    die "Admin user creation failed"
+  fi
+fi
+
+# The image enables the web installer for an empty database. Automated admin
+# creation replaces that flow, so remove INSTALL and clear the cached config.
+if ! "${DOCKER_COMPOSE[@]}" exec -T --user librenms librenms sh -c \
+  "sed -i '/^INSTALL=/d' /data/.env /opt/librenms/.env && artisan config:clear --no-interaction"; then
+  die "Could not finalize the LibreNMS installation"
+fi
+
+"${DOCKER_COMPOSE[@]}" restart dispatcher >/dev/null ||
+  die "Could not restart dispatcher after applying worker settings"
+
+if [[ -n "$SAVE_CREDS" ]]; then
+  write_credentials_file "$SAVE_CREDS"
+  info "Credentials saved to $SAVE_CREDS (chmod 600)"
 fi
 
 #-------------------------- Summary -------------------------------------
@@ -491,10 +732,10 @@ cat <<EOF
 LibreNMS deployment complete!
 
 Web UI: ${BASE_URL:-http://$(hostname -I | awk '{print $1}')/}
-Admin: admin / ${ADMIN_PASS}
+Admin user: admin
 Email: ${ADMIN_EMAIL}
 
-Database credentials: .env (chmod 600)
+Initial credentials: .env (chmod 600; ADMIN_PASS, database, Redis, SNMP)
 Credential file: ${SAVE_CREDS:-<none>}
 Log: ${LOG_FILE}
 

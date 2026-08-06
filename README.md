@@ -8,6 +8,7 @@
 
 - **HTTP only, no HTTPS.** Port `80` on the host maps to container `8000`. For HTTPS, put a reverse proxy (nginx, Caddy, Traefik) in front — this installer does **not** configure Let's Encrypt.
 - **Not production-hardened.** Single-node Compose for labs/homelabs/small sites. For production, add TLS, backups, monitoring of the monitor, and harden Docker/UFW properly.
+- **SMTP is not bundled.** Configure LibreNMS with your SMTP server before using email alerts.
 - **Licensed under GPL-3.0.** LibreNMS itself is GPL-3.0; scripts and config in this repo are also GPL-3.0.
 
 ---
@@ -82,13 +83,21 @@ sudo ./librenms-auto-install.sh --dry-run -n -u http://librenms.example.com
 | `-p` | `--pollers` | Poller processes (1–64, default: `16`) |
 | `-s` | `--save-creds` | Save credentials to `chmod 600` file |
 | `-n` | `--non-interactive` | No prompts (requires `--url`) |
-| `-f` | `--force` | Overwrite existing `.env` (backs up first; regenerates secrets) |
+| `-f` | `--force` | Rewrite existing `.env` after backup; loaded secrets are preserved |
 | `-D` | `--dry-run` | Preview without executing |
 | | `--no-firewall` | Skip UFW rules |
 | | `--no-ssl` | Compatibility flag; stack remains HTTP-only |
 | | `--emit-env` | Write generated `.env` to a file and exit (no Docker/root; for tests) |
 | | `--db-name` | Database name (default: `librenms`) |
 | | `--db-user` | Database user (default: `librenms`) |
+
+Legacy `--le-email` usage is rejected with an explanation because TLS is not
+implemented here. For test tooling, an environment file can be generated
+without root or Docker:
+
+```bash
+./librenms-auto-install.sh -n -u http://example.com --emit-env /tmp/librenms.env
+```
 
 ---
 
@@ -97,17 +106,22 @@ sudo ./librenms-auto-install.sh --dry-run -n -u http://librenms.example.com
 - Strong random passwords for DB root, DB user, Redis, and admin
 - Credentials in `.env` with `chmod 600` (not passed on the installer argv for wait loops where avoidable)
 - Redis requires a password on the internal Docker network
+- SNMP trap authorization is enabled with generated v2c/v3 credentials
 - MariaDB healthcheck uses the image `healthcheck.sh` (no password on process argv)
 - Non-root app containers (PUID/PGID 1000)
 - UFW rules added by the installer (unless `--no-firewall`):
   - `80/tcp` — LibreNMS web UI (HTTP)
-  - `162/udp` — SNMP traps (snmptrapd sidecar)
-  - `514/udp` — Syslog ingestion (syslogng sidecar)
+  - `162/tcp` and `162/udp` — SNMP traps (snmptrapd sidecar)
+  - `514/tcp` and `514/udp` — Syslog ingestion (syslogng sidecar)
   - SNMP **polling** is outbound; no inbound `161/udp` rule is opened
-- Reruns are idempotent: existing `.env` credentials are reused unless `--force`
+- Reruns and `--force` preserve existing credentials; supported CLI config changes are backed up and applied
 - Data under `./data/` survives container updates
 - Pinned LibreNMS image tag — no `:latest`
-- Health checks on db, redis, memcached, and librenms
+- Health checks on MariaDB, Redis, and LibreNMS
+
+Generated SNMP v2c/v3 trap credentials are stored in `.env`. Configure trap
+senders with `LIBRENMS_SNMP_COMMUNITY` or the `SNMP_USER`/`SNMP_AUTH`/`SNMP_PRIV`
+values; default unauthenticated trap acceptance is disabled.
 
 ---
 
@@ -115,9 +129,10 @@ sudo ./librenms-auto-install.sh --dry-run -n -u http://librenms.example.com
 
 - Ubuntu 22.04 / 24.04 LTS (or any Docker-compatible Linux)
 - Docker Engine + Docker Compose v2
+- Python 3 and `flock` (`util-linux`, included by default on Ubuntu)
 - Root/sudo access
 - 4 GB RAM minimum (8 GB recommended for >500 devices)
-- Ports `80/tcp`, `162/udp`, `514/udp` available on the host
+- Ports `80/tcp`, `162/tcp+udp`, and `514/tcp+udp` available on the host
 
 ---
 
@@ -128,8 +143,8 @@ The installer adds UFW rules automatically (unless `--no-firewall`):
 | Port | Protocol | Purpose |
 |------|----------|---------|
 | 80   | TCP      | LibreNMS web UI |
-| 162  | UDP      | SNMP trap receiver (snmptrapd sidecar) |
-| 514  | UDP      | Syslog receiver (syslogng sidecar) |
+| 162  | TCP/UDP  | SNMP trap receiver (snmptrapd sidecar) |
+| 514  | TCP/UDP  | Syslog receiver (syslogng sidecar) |
 
 It does **not** run `ufw enable` — enable it yourself:
 
@@ -156,33 +171,29 @@ sudo ufw enable
 ┌─────────────────────────────────────────────────────────────┐
 │                     Internal docker network                  │
 ├──────────────┬───────────┬────────────┬────────────────────┤
-│  librenms    │    db     │  memcached │      redis         │
-│  (app)       │ (MariaDB) │  (cache)   │  (cache/queue)     │
-│  Port 8000   │ Port 3306 │ Port 11211 │    Port 6379       │
-├──────────────┼───────────┼────────────┼────────────────────┤
-│  dispatcher  │ syslogng  │ snmptrapd  │                    │
-│  (polling)   │ (UDP 514) │ (UDP 162)  │                    │
-└──────────────┴───────────┴────────────┴────────────────────┘
+│  librenms    │      db       │       redis                 │
+│  (app)       │  (MariaDB)    │   (cache/queue)             │
+│  Port 8000   │  Port 3306    │     Port 6379               │
+├──────────────┼───────────────┼─────────────────────────────┤
+│  dispatcher  │   syslogng    │      snmptrapd              │
+│  (polling)   │ (TCP/UDP 514) │    (TCP/UDP 162)            │
+└──────────────┴───────────────┴─────────────────────────────┘
 ```
 
 **Services:**
 - **librenms** — Main web UI, alerting (host `80` → `8000`)
 - **dispatcher** — Distributed poller (`SIDECAR_DISPATCHER=1`)
-- **syslogng** — Syslog ingestion (`SIDECAR_SYSLOGNG=1`, UDP 514)
-- **snmptrapd** — SNMP trap receiver (`SIDECAR_SNMPTRAPD=1`, UDP 162)
+- **syslogng** — Syslog ingestion (`SIDECAR_SYSLOGNG=1`, TCP/UDP 514)
+- **snmptrapd** — Authorized SNMP trap receiver (`SIDECAR_SNMPTRAPD=1`, TCP/UDP 162)
 - **db** — MariaDB 10.11
-- **memcached** — Cache backend
 - **redis** — Cache/queue backend (password required)
 
 Sidecars follow the [official LibreNMS Docker design](https://github.com/librenms/docker).
 
 **Volumes:**
-- `./data/librenms` — LibreNMS data, configs, RRD files
+- `./data/librenms` — LibreNMS configuration, logs, plugins, and RRD files (`/data`)
 - `./data/db` — MariaDB database
 - `./data/redis` — Redis persistence
-- `./logs/librenms` — Application logs
-- `./config/librenms` — Custom config overrides
-- `./rrd` — RRD graphs
 
 ---
 
@@ -194,15 +205,16 @@ Sidecars follow the [official LibreNMS Docker design](https://github.com/librenm
 cd /opt/librenms-easydeploy
 docker compose pull
 docker compose up -d
-docker compose exec librenms php artisan migrate --force
 ```
+
+The official LibreNMS container runs migrations and seeding during startup.
 
 ### Backup
 
 ```bash
 cd /opt/librenms-easydeploy
 set -a; source .env; set +a
-docker compose exec -T -e MYSQL_PWD="$DB_ROOT_PASSWORD" db mysqldump -u root librenms > backup_$(date +%F).sql
+docker compose exec -T -e MYSQL_PWD="$DB_ROOT_PASSWORD" db mariadb-dump -u root "$DB_NAME" > backup_$(date +%F).sql
 tar -czf librenms_data_$(date +%F).tar.gz data/
 ```
 
@@ -236,6 +248,9 @@ After changing `docker-compose.yml`, sync the installer blob:
 python3 scripts/sync_embedded_compose.py
 ```
 
+The installer manages `docker-compose.yml` and backs up older versions during
+upgrades. Put local Compose customizations in `docker-compose.override.yml`.
+
 ---
 
 ## Testing
@@ -246,6 +261,7 @@ bats test/
 shellcheck librenms-auto-install.sh
 shfmt -d -i 2 librenms-auto-install.sh
 docker compose -f docker-compose.yml config --quiet
+python3 scripts/sync_embedded_compose.py --check
 ```
 
 CI on push/PR:
@@ -253,7 +269,8 @@ CI on push/PR:
 - Bats (args, `.env` emit, embedded compose drift)
 - Compose validation, no `:latest`, service list, embed sync
 - Secret scanning
-- E2E Compose startup + HTTP/title check
+- Full installer E2E: file permissions, all services, HTTP, admin creation,
+  LibreNMS validation, idempotent rerun, config update, and safe `--force`
 
 ---
 

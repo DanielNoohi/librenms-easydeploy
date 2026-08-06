@@ -1,167 +1,115 @@
+name: librenms-easydeploy
+
+x-librenms-environment: &librenms-environment
+  TZ: ${TZ:-UTC}
+  PUID: ${PUID:-1000}
+  PGID: ${PGID:-1000}
+  DB_HOST: db
+  DB_NAME: ${DB_NAME:-librenms}
+  DB_USER: ${DB_USER:-librenms}
+  DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+  DB_PORT: "3306"
+  DB_TIMEOUT: "60"
+  REDIS_HOST: ${REDIS_HOST:-redis}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+  CACHE_DRIVER: ${CACHE_DRIVER:-redis}
+  SESSION_DRIVER: ${SESSION_DRIVER:-redis}
+  LIBRENMS_SNMP_COMMUNITY: ${LIBRENMS_SNMP_COMMUNITY:?LIBRENMS_SNMP_COMMUNITY is required}
+
+x-librenms-service: &librenms-service
+  image: librenms/librenms:26.7.0
+  restart: unless-stopped
+  cap_add:
+    - NET_ADMIN
+    - NET_RAW
+  volumes:
+    - ./data/librenms:/data
+  networks:
+    - librenms-net
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
 services:
-  # LibreNMS web application + alerting
   librenms:
-    image: librenms/librenms:26.7.0
-    container_name: librenms
+    <<: *librenms-service
     hostname: librenms
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    restart: unless-stopped
     environment:
-      - TZ=${TZ:-UTC}
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - DB_HOST=db
-      - DB_NAME=${DB_NAME:-librenms}
-      - DB_USER=${DB_USER:-librenms}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_PORT=3306
-      - DB_TIMEOUT=60
-      - MEMCACHED_HOST=${MEMCACHED_HOST:-memcached}
-      - REDIS_HOST=${REDIS_HOST:-redis}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - CACHE_DRIVER=${CACHE_DRIVER:-redis}
-      - SESSION_DRIVER=${SESSION_DRIVER:-redis}
-      - BASE_URL=${BASE_URL:-http://localhost}
-      - POLLERS=${POLLERS:-16}
-    volumes:
-      - ./data/librenms:/data
-      - ./logs/librenms:/opt/librenms/logs
-      - ./config/librenms:/opt/librenms/config.d
-      - ./rrd:/opt/librenms/rrd
+      <<: *librenms-environment
+      LIBRENMS_BASE_URL: ${LIBRENMS_BASE_URL:-/}
     ports:
       - "80:8000"
     depends_on:
       db:
         condition: service_healthy
-      memcached:
-        condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - librenms-net
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 8000 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
 
-  # Distributed poller (official sidecar — SIDECAR_DISPATCHER=1)
   dispatcher:
-    image: librenms/librenms:26.7.0
-    container_name: librenms-dispatcher
+    <<: *librenms-service
     hostname: librenms-dispatcher
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    restart: unless-stopped
     environment:
-      - TZ=${TZ:-UTC}
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - DB_HOST=db
-      - DB_NAME=${DB_NAME:-librenms}
-      - DB_USER=${DB_USER:-librenms}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_PORT=3306
-      - DB_TIMEOUT=60
-      - REDIS_HOST=${REDIS_HOST:-redis}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - SIDECAR_DISPATCHER=1
-    volumes:
-      - ./data/librenms:/data
-      - ./logs/librenms:/opt/librenms/logs
+      <<: *librenms-environment
+      DISPATCHER_NODE_ID: dispatcher1
+      SIDECAR_DISPATCHER: "1"
     depends_on:
       librenms:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - librenms-net
 
-  # Syslog-ng sidecar (official — SIDECAR_SYSLOGNG=1, UDP 514)
   syslogng:
-    image: librenms/librenms:26.7.0
-    container_name: librenms-syslogng
+    <<: *librenms-service
     hostname: librenms-syslogng
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    restart: unless-stopped
     environment:
-      - TZ=${TZ:-UTC}
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - DB_HOST=db
-      - DB_NAME=${DB_NAME:-librenms}
-      - DB_USER=${DB_USER:-librenms}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_PORT=3306
-      - DB_TIMEOUT=60
-      - REDIS_HOST=${REDIS_HOST:-redis}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - SIDECAR_SYSLOGNG=1
-    volumes:
-      - ./data/librenms:/data
-      - ./logs/librenms:/opt/librenms/logs
+      <<: *librenms-environment
+      SIDECAR_SYSLOGNG: "1"
     ports:
+      - "514:514/tcp"
       - "514:514/udp"
     depends_on:
       librenms:
-        condition: service_started
-      db:
         condition: service_healthy
-    networks:
-      - librenms-net
+      redis:
+        condition: service_healthy
 
-  # SNMP trap receiver (official — SIDECAR_SNMPTRAPD=1, UDP 162)
   snmptrapd:
-    image: librenms/librenms:26.7.0
-    container_name: librenms-snmptrapd
+    <<: *librenms-service
     hostname: librenms-snmptrapd
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    restart: unless-stopped
     environment:
-      - TZ=${TZ:-UTC}
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
-      - DB_HOST=db
-      - DB_NAME=${DB_NAME:-librenms}
-      - DB_USER=${DB_USER:-librenms}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - DB_PORT=3306
-      - DB_TIMEOUT=60
-      - REDIS_HOST=${REDIS_HOST:-redis}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - SIDECAR_SNMPTRAPD=1
-    volumes:
-      - ./data/librenms:/data
-      - ./logs/librenms:/opt/librenms/logs
+      <<: *librenms-environment
+      SIDECAR_SNMPTRAPD: "1"
+      SNMP_USER: ${SNMP_USER:-librenms_user}
+      SNMP_AUTH: ${SNMP_AUTH:?SNMP_AUTH is required}
+      SNMP_PRIV: ${SNMP_PRIV:?SNMP_PRIV is required}
+      SNMP_ENGINEID: ${SNMP_ENGINEID:?SNMP_ENGINEID is required}
+      SNMP_DISABLE_AUTHORIZATION: ${SNMP_DISABLE_AUTHORIZATION:-no}
     ports:
+      - "162:162/tcp"
       - "162:162/udp"
     depends_on:
       librenms:
-        condition: service_started
-      db:
         condition: service_healthy
-    networks:
-      - librenms-net
+      redis:
+        condition: service_healthy
 
-  # MariaDB 10.11
   db:
     image: mariadb:10.11
-    container_name: librenms-db
     restart: unless-stopped
     environment:
-      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
-      - MYSQL_DATABASE=${DB_NAME:-librenms}
-      - MYSQL_USER=${DB_USER:-librenms}
-      - MYSQL_PASSWORD=${DB_PASSWORD}
-      - TZ=${TZ:-UTC}
+      TZ: ${TZ:-UTC}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD is required}
+      MARIADB_DATABASE: ${DB_NAME:-librenms}
+      MARIADB_USER: ${DB_USER:-librenms}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
     volumes:
       - ./data/db:/var/lib/mysql
     command:
@@ -169,54 +117,54 @@ services:
       - --lower-case-table-names=0
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
-      - --max_allowed_packet=64M
-      - --innodb_buffer_pool_size=256M
+      - --max-allowed-packet=64M
+      - --innodb-buffer-pool-size=256M
     healthcheck:
-      # Official MariaDB image helper — no password on process argv
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 12
       start_period: 30s
     networks:
       - librenms-net
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
-  # Memcached (cache backend)
-  memcached:
-    image: memcached:1.6-alpine
-    container_name: librenms-memcached
-    restart: unless-stopped
-    command: -m 64
-    networks:
-      - librenms-net
-    healthcheck:
-      test: ["CMD-SHELL", "echo version | nc 127.0.0.1 11211 | grep -q VERSION"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # Redis (cache + queue backend) — password required on the bridge network
   redis:
-    image: redis:7-alpine
-    container_name: librenms-redis
+    image: redis:7.2-alpine
     restart: unless-stopped
     environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     command:
-      - sh
-      - -c
-      - redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 256mb --maxmemory-policy allkeys-lru
+      - /bin/sh
+      - -ec
+      - |
+        umask 077
+        {
+          printf 'requirepass %s\n' "$$REDIS_PASSWORD"
+          printf 'maxmemory 512mb\n'
+          printf 'maxmemory-policy noeviction\n'
+          printf 'appendonly yes\n'
+        } >/tmp/redis.conf
+        exec redis-server /tmp/redis.conf
     volumes:
       - ./data/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       - librenms-net
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
 networks:
   librenms-net:
