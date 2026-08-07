@@ -223,8 +223,9 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      CADDY_EMAIL: ${CADDY_EMAIL:?CADDY_EMAIL is required when TLS profile is enabled}
-      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:?CADDY_SITE_ADDRESS is required when TLS profile is enabled}
+      # Interpolated even when the tls profile is inactive — keep soft defaults.
+      CADDY_EMAIL: ${CADDY_EMAIL:-}
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-}
     volumes:
       - ./data/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy/data:/data
