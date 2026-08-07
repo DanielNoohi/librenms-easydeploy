@@ -1,0 +1,12 @@
+# LibreNMS EasyDeploy host log rotation
+# Install: sudo cp contrib/logrotate-librenms-easydeploy /etc/logrotate.d/librenms-easydeploy
+/var/log/librenms-easydeploy.log {
+  weekly
+  rotate 8
+  compress
+  delaycompress
+  missingok
+  notifempty
+  create 0640 root adm
+  copytruncate
+}

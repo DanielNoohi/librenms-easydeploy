@@ -64,6 +64,33 @@ jobs:
           EOF
           docker compose -f docker-compose.yml --profile tls config --quiet
           docker compose -f docker-compose.yml --profile tls config --services | grep -qx caddy
+      - name: Validate self-signed Caddyfile
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/caddy-self
+          cat >/tmp/caddy-self/Caddyfile <<'EOF'
+          localhost {
+            tls internal
+            reverse_proxy librenms:8000
+          }
+          EOF
+          docker run --rm -v /tmp/caddy-self/Caddyfile:/etc/caddy/Caddyfile:ro caddy:2.9-alpine \
+            caddy validate --config /etc/caddy/Caddyfile
+      - name: Validate mail compose profile
+        run: |
+          set -euo pipefail
+          set -a
+          # shellcheck disable=SC1091
+          source .env.example
+          set +a
+          export SMTP_HOST=smtp.example.com
+          export SMTP_PORT=587
+          export SMTP_USER=alerts
+          export SMTP_PASSWORD=changeme
+          export SMTP_FROM=alerts@example.com
+          export COMPOSE_PROFILES=mail
+          docker compose -f docker-compose.yml --profile mail config --quiet
+          docker compose -f docker-compose.yml --profile mail config --services | grep -qx msmtpd
       - name: No :latest tags
         run: |
           if grep -q ':latest' docker-compose.yml; then
@@ -81,13 +108,15 @@ jobs:
           for svc in db redis librenms dispatcher syslogng snmptrapd; do
             echo "$SERVICES" | grep -q "^${svc}$" || { echo "::error::Missing: $svc"; exit 1; }
           done
-          # caddy is profile-gated and must NOT appear without --profile tls
-          if echo "$SERVICES" | grep -qx caddy; then
-            echo "::error::caddy should only appear with --profile tls"
+          # optional profile services must NOT appear without their profiles
+          if echo "$SERVICES" | grep -Eqx 'caddy|msmtpd'; then
+            echo "::error::caddy/msmtpd should only appear with their compose profiles"
             exit 1
           fi
       - name: ShellCheck day-2 scripts
-        run: shellcheck scripts/backup.sh scripts/restore.sh scripts/docker-user-ufw.sh
+        run: |
+          shellcheck scripts/backup.sh scripts/restore.sh scripts/docker-user-ufw.sh \
+            scripts/upgrade.sh scripts/health-check.sh
       - name: Embedded compose matches docker-compose.yml
         run: python3 scripts/sync_embedded_compose.py --check
       - name: Secret hygiene
@@ -263,17 +292,50 @@ jobs:
           sudo grep -qx "DB_PASSWORD=${original_db_password}" .env
           curl -fsSL http://localhost/ -o /tmp/librenms-home.html
           grep -qi 'librenms' /tmp/librenms-home.html
+      - name: Verify self-signed TLS install path
+        run: |
+          set -euo pipefail
+          # Free :80/:443 from the HTTP stack, then prove Caddy internal TLS works.
+          cd /opt/librenms-e2e
+          sudo docker compose down -v --remove-orphans
+          sudo "$GITHUB_WORKSPACE/librenms-auto-install.sh" \
+            --non-interactive \
+            --url https://localhost \
+            --self-signed-tls \
+            --timezone UTC \
+            --pollers 2 \
+            --dir /opt/librenms-e2e-tls \
+            --save-creds /tmp/librenms-e2e-tls-credentials \
+            --no-firewall
+          sudo grep -q 'tls internal' /opt/librenms-e2e-tls/data/caddy/Caddyfile
+          sudo grep -qx 'ENABLE_TLS=true' /opt/librenms-e2e-tls/.env
+          sudo grep -qx 'TLS_MODE=self-signed' /opt/librenms-e2e-tls/.env
+          for i in $(seq 1 60); do
+            if curl -kfsSL https://localhost/ -o /tmp/librenms-tls.html \
+              && grep -qi 'librenms' /tmp/librenms-tls.html; then
+              break
+            fi
+            sleep 3
+            [ "$i" -eq 60 ] && { echo "::error::HTTPS probe failed"; exit 1; }
+          done
       - name: Logs on failure
         if: failure()
         run: |
           set +e
-          cd /opt/librenms-e2e
-          # .env is root:600 from the installer; Compose needs it (or sudo).
-          sudo docker compose ps || true
-          for s in librenms db redis dispatcher syslogng snmptrapd; do
-            echo "--- $s ---"
-            sudo docker compose logs --tail=120 "$s" || true
+          for dir in /opt/librenms-e2e /opt/librenms-e2e-tls; do
+            [ -d "$dir" ] || continue
+            echo "===== $dir ====="
+            cd "$dir"
+            sudo docker compose ps || true
+            for s in librenms db redis dispatcher syslogng snmptrapd caddy msmtpd; do
+              echo "--- $s ---"
+              sudo docker compose logs --tail=80 "$s" || true
+            done
           done
       - name: Cleanup
         if: always()
-        run: cd /opt/librenms-e2e && sudo docker compose down -v --remove-orphans 2>/dev/null || true
+        run: |
+          for dir in /opt/librenms-e2e /opt/librenms-e2e-tls; do
+            [ -d "$dir" ] || continue
+            (cd "$dir" && sudo docker compose down -v --remove-orphans) 2>/dev/null || true
+          done

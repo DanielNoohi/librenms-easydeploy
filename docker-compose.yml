@@ -213,7 +213,8 @@ services:
           memory: 128M
 
   # Optional TLS terminator (docker compose --profile tls up -d).
-  # Enabled automatically when the installer configures HTTPS + --le-email.
+  # Enabled automatically when the installer configures HTTPS + --le-email
+  # or --self-signed-tls.
   caddy:
     image: caddy:2.9-alpine
     profiles: ["tls"]
@@ -246,6 +247,36 @@ services:
           memory: 256M
         reservations:
           memory: 64M
+
+  # Optional SMTP relay (docker compose --profile mail up -d).
+  # LibreNMS submits to msmtpd:25; msmtpd talks to the upstream SMTP server.
+  msmtpd:
+    image: crazymax/msmtpd:1.8.34
+    profiles: ["mail"]
+    restart: unless-stopped
+    environment:
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_TLS: ${SMTP_TLS:-on}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-on}
+      SMTP_TLS_CHECKCERT: ${SMTP_TLS_CHECKCERT:-on}
+      SMTP_AUTH: ${SMTP_AUTH:-on}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    networks:
+      - librenms-net
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 32M
 
 networks:
   librenms-net:

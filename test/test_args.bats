@@ -336,8 +336,69 @@ EOF
   grep -q 'memory: 1G' docker-compose.yml
 }
 
+@test "compose file defines msmtpd mail profile" {
+  grep -q 'profiles: \["mail"\]' docker-compose.yml
+  grep -q 'image: crazymax/msmtpd:1.8.34' docker-compose.yml
+}
+
 @test "day-2 scripts exist and are executable" {
   [[ -x scripts/backup.sh ]]
   [[ -x scripts/restore.sh ]]
   [[ -x scripts/docker-user-ufw.sh ]]
+  [[ -x scripts/upgrade.sh ]]
+  [[ -x scripts/health-check.sh ]]
+  [[ -f contrib/logrotate-librenms-easydeploy ]]
+}
+
+@test "self-signed TLS dry-run allows localhost" {
+  run "$SCRIPT" --dry-run --non-interactive --url https://localhost --self-signed-tls
+  assert_success
+  assert_output "TLS: enabled (Caddy self-signed"
+  assert_output "Caddy site: localhost"
+}
+
+@test "self-signed emit-env sets TLS_MODE" {
+  envfile="$TEST_TMP/selfsigned.env"
+  run "$SCRIPT" --non-interactive --url https://localhost --self-signed-tls --emit-env "$envfile"
+  assert_success
+  grep -q '^ENABLE_TLS=true$' "$envfile"
+  grep -q '^TLS_MODE=self-signed$' "$envfile"
+  grep -q '^COMPOSE_PROFILES=tls$' "$envfile"
+  grep -q '^LIBRENMS_HTTP_PUBLISH=127.0.0.1:8000:8000$' "$envfile"
+}
+
+@test "smtp-host enables mail profile in emit-env" {
+  envfile="$TEST_TMP/mail.env"
+  run "$SCRIPT" --non-interactive --url http://nms.example.com \
+    --smtp-host smtp.example.com --smtp-user alerts --smtp-password 'MailPass123456' \
+    --smtp-from alerts@example.com --emit-env "$envfile"
+  assert_success
+  grep -q '^ENABLE_MAIL=true$' "$envfile"
+  grep -q '^SMTP_HOST=smtp.example.com$' "$envfile"
+  grep -q '^SMTP_FROM=alerts@example.com$' "$envfile"
+  grep -q '^COMPOSE_PROFILES=mail$' "$envfile"
+}
+
+@test "tls and mail profiles combine" {
+  envfile="$TEST_TMP/both.env"
+  run "$SCRIPT" --non-interactive --url https://nms.example.com --le-email ops@example.com \
+    --smtp-host smtp.example.com --smtp-from ops@example.com --emit-env "$envfile"
+  assert_success
+  grep -q '^COMPOSE_PROFILES=tls,mail$' "$envfile"
+}
+
+@test "backup and upgrade scripts are shell-safe" {
+  bash -n scripts/backup.sh
+  bash -n scripts/restore.sh
+  bash -n scripts/upgrade.sh
+  bash -n scripts/health-check.sh
+  bash -n scripts/docker-user-ufw.sh
+}
+
+@test "write_caddyfile self-signed uses tls internal" {
+  grep -A20 '^write_caddyfile()' "$SCRIPT" | grep -q 'tls internal'
+}
+
+@test "write_email_yaml points at msmtpd" {
+  grep -A25 '^write_email_yaml()' "$SCRIPT" | grep -q 'email_smtp_host: msmtpd'
 }

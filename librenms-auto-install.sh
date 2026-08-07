@@ -40,10 +40,22 @@ DRY_RUN=false
 SKIP_FIREWALL=false
 SKIP_SSL=false
 ENABLE_TLS=false
+TLS_MODE="acme" # acme | self-signed
+SELF_SIGNED_TLS=false
+ENABLE_MAIL=false
 LE_EMAIL="${LE_EMAIL:-}"
 CADDY_EMAIL="${CADDY_EMAIL:-}"
 CADDY_SITE_ADDRESS="${CADDY_SITE_ADDRESS:-}"
 LIBRENMS_HTTP_PUBLISH="${LIBRENMS_HTTP_PUBLISH:-}"
+SMTP_HOST="${SMTP_HOST:-}"
+SMTP_PORT="${SMTP_PORT:-}"
+SMTP_USER="${SMTP_USER:-}"
+SMTP_PASSWORD="${SMTP_PASSWORD:-}"
+SMTP_FROM="${SMTP_FROM:-}"
+SMTP_TLS="${SMTP_TLS:-}"
+SMTP_STARTTLS="${SMTP_STARTTLS:-}"
+SMTP_TLS_CHECKCERT="${SMTP_TLS_CHECKCERT:-}"
+SMTP_AUTH="${SMTP_AUTH:-}"
 SAVE_CREDS=""
 EMIT_ENV=""
 ADMIN_PASS="${ADMIN_PASS:-}"
@@ -55,6 +67,8 @@ POLLERS_SET=false
 DB_NAME_SET=false
 DB_USER_SET=false
 LE_EMAIL_SET=false
+SMTP_HOST_SET=false
+SELF_SIGNED_SET=false
 
 #-------------------------- Logging -------------------------------------
 LOG_FILE="/var/log/librenms-easydeploy.log"
@@ -103,7 +117,7 @@ gen_hex() {
 }
 
 #-------------------------- Embedded docker-compose.yml (for curl|bash mode) --
-EMBEDDED_COMPOSE_B64="bmFtZTogbGlicmVubXMtZWFzeWRlcGxveQoKeC1saWJyZW5tcy1lbnZpcm9ubWVudDogJmxpYnJlbm1zLWVudmlyb25tZW50CiAgVFo6ICR7VFo6LVVUQ30KICBQVUlEOiAke1BVSUQ6LTEwMDB9CiAgUEdJRDogJHtQR0lEOi0xMDAwfQogIERCX0hPU1Q6IGRiCiAgREJfTkFNRTogJHtEQl9OQU1FOi1saWJyZW5tc30KICBEQl9VU0VSOiAke0RCX1VTRVI6LWxpYnJlbm1zfQogIERCX1BBU1NXT1JEOiAke0RCX1BBU1NXT1JEOj9EQl9QQVNTV09SRCBpcyByZXF1aXJlZH0KICBEQl9QT1JUOiAiMzMwNiIKICBEQl9USU1FT1VUOiAiNjAiCiAgUkVESVNfSE9TVDogJHtSRURJU19IT1NUOi1yZWRpc30KICBSRURJU19QQVNTV09SRDogJHtSRURJU19QQVNTV09SRDo/UkVESVNfUEFTU1dPUkQgaXMgcmVxdWlyZWR9CiAgQ0FDSEVfRFJJVkVSOiAke0NBQ0hFX0RSSVZFUjotcmVkaXN9CiAgU0VTU0lPTl9EUklWRVI6ICR7U0VTU0lPTl9EUklWRVI6LXJlZGlzfQogIExJQlJFTk1TX1NOTVBfQ09NTVVOSVRZOiAke0xJQlJFTk1TX1NOTVBfQ09NTVVOSVRZOj9MSUJSRU5NU19TTk1QX0NPTU1VTklUWSBpcyByZXF1aXJlZH0KCngtbGlicmVubXMtc2VydmljZTogJmxpYnJlbm1zLXNlcnZpY2UKICBpbWFnZTogbGlicmVubXMvbGlicmVubXM6MjYuNy4wCiAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICBjYXBfYWRkOgogICAgLSBORVRfQURNSU4KICAgIC0gTkVUX1JBVwogIHZvbHVtZXM6CiAgICAtIC4vZGF0YS9saWJyZW5tczovZGF0YQogIG5ldHdvcmtzOgogICAgLSBsaWJyZW5tcy1uZXQKICBsb2dnaW5nOgogICAgZHJpdmVyOiBqc29uLWZpbGUKICAgIG9wdGlvbnM6CiAgICAgIG1heC1zaXplOiAxMG0KICAgICAgbWF4LWZpbGU6ICIzIgoKc2VydmljZXM6CiAgbGlicmVubXM6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcwogICAgZW52aXJvbm1lbnQ6CiAgICAgIDw8OiAqbGlicmVubXMtZW52aXJvbm1lbnQKICAgICAgTElCUkVOTVNfQkFTRV9VUkw6ICR7TElCUkVOTVNfQkFTRV9VUkw6LS99CiAgICAjIERlZmF1bHQgSFRUUDogc2V0IExJQlJFTk1TX0hUVFBfUFVCTElTSD04MDo4MDAwIGluIC5lbnYuCiAgICAjIFdpdGggVExTOiAxMjcuMC4wLjE6ODAwMDo4MDAwIHNvIG9ubHkgbG9vcGJhY2sgaXMgZXhwb3NlZCAoQ2FkZHkgc2VydmVzIDo4MC86NDQzKS4KICAgICMgTm90ZTogZG8gbm90IHVzZSAke1ZBUjotODA6ODAwMH0g4oCUIENvbXBvc2UgdHJlYXRzIHRoZSBleHRyYSBjb2xvbiBhcyBzeW50YXguCiAgICBwb3J0czoKICAgICAgLSAiJHtMSUJSRU5NU19IVFRQX1BVQkxJU0g6P0xJQlJFTk1TX0hUVFBfUFVCTElTSCBpcyByZXF1aXJlZCAoZS5nLiA4MDo4MDAwKX0iCiAgICBkZXBlbmRzX29uOgogICAgICBkYjoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgICByZWRpczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgaGVhbHRoY2hlY2s6CiAgICAgIHRlc3Q6IFsiQ01EIiwgImN1cmwiLCAiLWZzUyIsICJodHRwOi8vbG9jYWxob3N0OjgwMDAvIl0KICAgICAgaW50ZXJ2YWw6IDE1cwogICAgICB0aW1lb3V0OiA1cwogICAgICByZXRyaWVzOiAxMgogICAgICBzdGFydF9wZXJpb2Q6IDkwcwogICAgZGVwbG95OgogICAgICByZXNvdXJjZXM6CiAgICAgICAgbGltaXRzOgogICAgICAgICAgbWVtb3J5OiAxRwogICAgICAgIHJlc2VydmF0aW9uczoKICAgICAgICAgIG1lbW9yeTogMjU2TQoKICBkaXNwYXRjaGVyOgogICAgPDw6ICpsaWJyZW5tcy1zZXJ2aWNlCiAgICBob3N0bmFtZTogbGlicmVubXMtZGlzcGF0Y2hlcgogICAgZW52aXJvbm1lbnQ6CiAgICAgIDw8OiAqbGlicmVubXMtZW52aXJvbm1lbnQKICAgICAgRElTUEFUQ0hFUl9OT0RFX0lEOiBkaXNwYXRjaGVyMQogICAgICBTSURFQ0FSX0RJU1BBVENIRVI6ICIxIgogICAgZGVwZW5kc19vbjoKICAgICAgbGlicmVubXM6CiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX3N0YXJ0ZWQKICAgICAgcmVkaXM6CiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX3N0YXJ0ZWQKICAgIGRlcGxveToKICAgICAgcmVzb3VyY2VzOgogICAgICAgIGxpbWl0czoKICAgICAgICAgIG1lbW9yeTogMUcKICAgICAgICByZXNlcnZhdGlvbnM6CiAgICAgICAgICBtZW1vcnk6IDI1Nk0KCiAgc3lzbG9nbmc6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcy1zeXNsb2duZwogICAgZW52aXJvbm1lbnQ6CiAgICAgIDw8OiAqbGlicmVubXMtZW52aXJvbm1lbnQKICAgICAgU0lERUNBUl9TWVNMT0dORzogIjEiCiAgICBwb3J0czoKICAgICAgLSAiNTE0OjUxNC90Y3AiCiAgICAgIC0gIjUxNDo1MTQvdWRwIgogICAgZGVwZW5kc19vbjoKICAgICAgbGlicmVubXM6CiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX3N0YXJ0ZWQKICAgICAgcmVkaXM6CiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX3N0YXJ0ZWQKICAgIGRlcGxveToKICAgICAgcmVzb3VyY2VzOgogICAgICAgIGxpbWl0czoKICAgICAgICAgIG1lbW9yeTogNTEyTQogICAgICAgIHJlc2VydmF0aW9uczoKICAgICAgICAgIG1lbW9yeTogMTI4TQoKICBzbm1wdHJhcGQ6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcy1zbm1wdHJhcGQKICAgIGVudmlyb25tZW50OgogICAgICA8PDogKmxpYnJlbm1zLWVudmlyb25tZW50CiAgICAgIFNJREVDQVJfU05NUFRSQVBEOiAiMSIKICAgICAgU05NUF9VU0VSOiAke1NOTVBfVVNFUjotbGlicmVubXNfdXNlcn0KICAgICAgU05NUF9BVVRIOiAke1NOTVBfQVVUSDo/U05NUF9BVVRIIGlzIHJlcXVpcmVkfQogICAgICBTTk1QX1BSSVY6ICR7U05NUF9QUklWOj9TTk1QX1BSSVYgaXMgcmVxdWlyZWR9CiAgICAgIFNOTVBfRU5HSU5FSUQ6ICR7U05NUF9FTkdJTkVJRDo/U05NUF9FTkdJTkVJRCBpcyByZXF1aXJlZH0KICAgICAgU05NUF9ESVNBQkxFX0FVVEhPUklaQVRJT046ICR7U05NUF9ESVNBQkxFX0FVVEhPUklaQVRJT046LW5vfQogICAgcG9ydHM6CiAgICAgIC0gIjE2MjoxNjIvdGNwIgogICAgICAtICIxNjI6MTYyL3VkcCIKICAgIGRlcGVuZHNfb246CiAgICAgIGxpYnJlbm1zOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9zdGFydGVkCiAgICAgIHJlZGlzOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9zdGFydGVkCiAgICBkZXBsb3k6CiAgICAgIHJlc291cmNlczoKICAgICAgICBsaW1pdHM6CiAgICAgICAgICBtZW1vcnk6IDUxMk0KICAgICAgICByZXNlcnZhdGlvbnM6CiAgICAgICAgICBtZW1vcnk6IDEyOE0KCiAgZGI6CiAgICBpbWFnZTogbWFyaWFkYjoxMC4xMQogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICAgIGVudmlyb25tZW50OgogICAgICBUWjogJHtUWjotVVRDfQogICAgICBNQVJJQURCX1JPT1RfUEFTU1dPUkQ6ICR7REJfUk9PVF9QQVNTV09SRDo/REJfUk9PVF9QQVNTV09SRCBpcyByZXF1aXJlZH0KICAgICAgTUFSSUFEQl9EQVRBQkFTRTogJHtEQl9OQU1FOi1saWJyZW5tc30KICAgICAgTUFSSUFEQl9VU0VSOiAke0RCX1VTRVI6LWxpYnJlbm1zfQogICAgICBNQVJJQURCX1BBU1NXT1JEOiAke0RCX1BBU1NXT1JEOj9EQl9QQVNTV09SRCBpcyByZXF1aXJlZH0KICAgIHZvbHVtZXM6CiAgICAgIC0gLi9kYXRhL2RiOi92YXIvbGliL215c3FsCiAgICBjb21tYW5kOgogICAgICAtIG15c3FsZAogICAgICAtIC0taW5ub2RiLWZpbGUtcGVyLXRhYmxlPTEKICAgICAgLSAtLWxvd2VyLWNhc2UtdGFibGUtbmFtZXM9MAogICAgICAtIC0tY2hhcmFjdGVyLXNldC1zZXJ2ZXI9dXRmOG1iNAogICAgICAtIC0tY29sbGF0aW9uLXNlcnZlcj11dGY4bWI0X3VuaWNvZGVfY2kKICAgICAgLSAtLW1heC1hbGxvd2VkLXBhY2tldD02NE0KICAgICAgLSAtLWlubm9kYi1idWZmZXItcG9vbC1zaXplPTEyOE0KICAgIGhlYWx0aGNoZWNrOgogICAgICAjIFByZWZlciBtYXJpYWRiLWFkbWluIOKAlCBtYXRjaGVzIHRoZSBpbnN0YWxsZXIgd2FpdCBsb29wIGFuZCBhdm9pZHMKICAgICAgIyBmbGFreSBoZWFsdGhjaGVjay5zaCBmYWxzZS1uZWdhdGl2ZXMgdGhhdCBibG9jayBkZXBlbmRzX29uLgogICAgICB0ZXN0OgogICAgICAgIFsKICAgICAgICAgICJDTUQtU0hFTEwiLAogICAgICAgICAgIk1ZU1FMX1BXRD1cIiQkTUFSSUFEQl9ST09UX1BBU1NXT1JEXCIgbWFyaWFkYi1hZG1pbiBwaW5nIC1obG9jYWxob3N0IC11cm9vdCAtLXNpbGVudCIsCiAgICAgICAgXQogICAgICBpbnRlcnZhbDogNXMKICAgICAgdGltZW91dDogNXMKICAgICAgcmV0cmllczogMzYKICAgICAgc3RhcnRfcGVyaW9kOiA2MHMKICAgIG5ldHdvcmtzOgogICAgICAtIGxpYnJlbm1zLW5ldAogICAgbG9nZ2luZzoKICAgICAgZHJpdmVyOiBqc29uLWZpbGUKICAgICAgb3B0aW9uczoKICAgICAgICBtYXgtc2l6ZTogMTBtCiAgICAgICAgbWF4LWZpbGU6ICIzIgogICAgZGVwbG95OgogICAgICByZXNvdXJjZXM6CiAgICAgICAgbGltaXRzOgogICAgICAgICAgbWVtb3J5OiAxRwogICAgICAgIHJlc2VydmF0aW9uczoKICAgICAgICAgIG1lbW9yeTogMjU2TQoKICByZWRpczoKICAgIGltYWdlOiByZWRpczo3LjItYWxwaW5lCiAgICByZXN0YXJ0OiB1bmxlc3Mtc3RvcHBlZAogICAgZW52aXJvbm1lbnQ6CiAgICAgIFJFRElTX1BBU1NXT1JEOiAke1JFRElTX1BBU1NXT1JEOj9SRURJU19QQVNTV09SRCBpcyByZXF1aXJlZH0KICAgIGNvbW1hbmQ6CiAgICAgIC0gL2Jpbi9zaAogICAgICAtIC1lYwogICAgICAtIHwKICAgICAgICB1bWFzayAwNzcKICAgICAgICB7CiAgICAgICAgICBwcmludGYgJ3JlcXVpcmVwYXNzICVzXG4nICIkJFJFRElTX1BBU1NXT1JEIgogICAgICAgICAgcHJpbnRmICdtYXhtZW1vcnkgNTEybWJcbicKICAgICAgICAgIHByaW50ZiAnbWF4bWVtb3J5LXBvbGljeSBub2V2aWN0aW9uXG4nCiAgICAgICAgICBwcmludGYgJ2FwcGVuZG9ubHkgeWVzXG4nCiAgICAgICAgfSA+L3RtcC9yZWRpcy5jb25mCiAgICAgICAgZXhlYyByZWRpcy1zZXJ2ZXIgL3RtcC9yZWRpcy5jb25mCiAgICB2b2x1bWVzOgogICAgICAtIC4vZGF0YS9yZWRpczovZGF0YQogICAgaGVhbHRoY2hlY2s6CiAgICAgIHRlc3Q6IFsiQ01ELVNIRUxMIiwgIlJFRElTQ0xJX0FVVEg9XCIkJFJFRElTX1BBU1NXT1JEXCIgcmVkaXMtY2xpIHBpbmcgfCBncmVwIC1xIFBPTkciXQogICAgICBpbnRlcnZhbDogMTBzCiAgICAgIHRpbWVvdXQ6IDVzCiAgICAgIHJldHJpZXM6IDEyCiAgICAgIHN0YXJ0X3BlcmlvZDogMTBzCiAgICBuZXR3b3JrczoKICAgICAgLSBsaWJyZW5tcy1uZXQKICAgIGxvZ2dpbmc6CiAgICAgIGRyaXZlcjoganNvbi1maWxlCiAgICAgIG9wdGlvbnM6CiAgICAgICAgbWF4LXNpemU6IDEwbQogICAgICAgIG1heC1maWxlOiAiMyIKICAgIGRlcGxveToKICAgICAgcmVzb3VyY2VzOgogICAgICAgIGxpbWl0czoKICAgICAgICAgIG1lbW9yeTogNjQwTQogICAgICAgIHJlc2VydmF0aW9uczoKICAgICAgICAgIG1lbW9yeTogMTI4TQoKICAjIE9wdGlvbmFsIFRMUyB0ZXJtaW5hdG9yIChkb2NrZXIgY29tcG9zZSAtLXByb2ZpbGUgdGxzIHVwIC1kKS4KICAjIEVuYWJsZWQgYXV0b21hdGljYWxseSB3aGVuIHRoZSBpbnN0YWxsZXIgY29uZmlndXJlcyBIVFRQUyArIC0tbGUtZW1haWwuCiAgY2FkZHk6CiAgICBpbWFnZTogY2FkZHk6Mi45LWFscGluZQogICAgcHJvZmlsZXM6IFsidGxzIl0KICAgIHJlc3RhcnQ6IHVubGVzcy1zdG9wcGVkCiAgICBwb3J0czoKICAgICAgLSAiODA6ODAiCiAgICAgIC0gIjQ0Mzo0NDMiCiAgICAgIC0gIjQ0Mzo0NDMvdWRwIgogICAgZW52aXJvbm1lbnQ6CiAgICAgICMgSW50ZXJwb2xhdGVkIGV2ZW4gd2hlbiB0aGUgdGxzIHByb2ZpbGUgaXMgaW5hY3RpdmUg4oCUIGtlZXAgc29mdCBkZWZhdWx0cy4KICAgICAgQ0FERFlfRU1BSUw6ICR7Q0FERFlfRU1BSUw6LX0KICAgICAgQ0FERFlfU0lURV9BRERSRVNTOiAke0NBRERZX1NJVEVfQUREUkVTUzotfQogICAgdm9sdW1lczoKICAgICAgLSAuL2RhdGEvY2FkZHkvQ2FkZHlmaWxlOi9ldGMvY2FkZHkvQ2FkZHlmaWxlOnJvCiAgICAgIC0gLi9kYXRhL2NhZGR5L2RhdGE6L2RhdGEKICAgICAgLSAuL2RhdGEvY2FkZHkvY29uZmlnOi9jb25maWcKICAgIGRlcGVuZHNfb246CiAgICAgIGxpYnJlbm1zOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9zdGFydGVkCiAgICBuZXR3b3JrczoKICAgICAgLSBsaWJyZW5tcy1uZXQKICAgIGxvZ2dpbmc6CiAgICAgIGRyaXZlcjoganNvbi1maWxlCiAgICAgIG9wdGlvbnM6CiAgICAgICAgbWF4LXNpemU6IDEwbQogICAgICAgIG1heC1maWxlOiAiMyIKICAgIGRlcGxveToKICAgICAgcmVzb3VyY2VzOgogICAgICAgIGxpbWl0czoKICAgICAgICAgIG1lbW9yeTogMjU2TQogICAgICAgIHJlc2VydmF0aW9uczoKICAgICAgICAgIG1lbW9yeTogNjRNCgpuZXR3b3JrczoKICBsaWJyZW5tcy1uZXQ6CiAgICBkcml2ZXI6IGJyaWRnZQo="
+EMBEDDED_COMPOSE_B64="bmFtZTogbGlicmVubXMtZWFzeWRlcGxveQoKeC1saWJyZW5tcy1lbnZpcm9ubWVudDogJmxpYnJlbm1zLWVudmlyb25tZW50CiAgVFo6ICR7VFo6LVVUQ30KICBQVUlEOiAke1BVSUQ6LTEwMDB9CiAgUEdJRDogJHtQR0lEOi0xMDAwfQogIERCX0hPU1Q6IGRiCiAgREJfTkFNRTogJHtEQl9OQU1FOi1saWJyZW5tc30KICBEQl9VU0VSOiAke0RCX1VTRVI6LWxpYnJlbm1zfQogIERCX1BBU1NXT1JEOiAke0RCX1BBU1NXT1JEOj9EQl9QQVNTV09SRCBpcyByZXF1aXJlZH0KICBEQl9QT1JUOiAiMzMwNiIKICBEQl9USU1FT1VUOiAiNjAiCiAgUkVESVNfSE9TVDogJHtSRURJU19IT1NUOi1yZWRpc30KICBSRURJU19QQVNTV09SRDogJHtSRURJU19QQVNTV09SRDo/UkVESVNfUEFTU1dPUkQgaXMgcmVxdWlyZWR9CiAgQ0FDSEVfRFJJVkVSOiAke0NBQ0hFX0RSSVZFUjotcmVkaXN9CiAgU0VTU0lPTl9EUklWRVI6ICR7U0VTU0lPTl9EUklWRVI6LXJlZGlzfQogIExJQlJFTk1TX1NOTVBfQ09NTVVOSVRZOiAke0xJQlJFTk1TX1NOTVBfQ09NTVVOSVRZOj9MSUJSRU5NU19TTk1QX0NPTU1VTklUWSBpcyByZXF1aXJlZH0KCngtbGlicmVubXMtc2VydmljZTogJmxpYnJlbm1zLXNlcnZpY2UKICBpbWFnZTogbGlicmVubXMvbGlicmVubXM6MjYuNy4wCiAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICBjYXBfYWRkOgogICAgLSBORVRfQURNSU4KICAgIC0gTkVUX1JBVwogIHZvbHVtZXM6CiAgICAtIC4vZGF0YS9saWJyZW5tczovZGF0YQogIG5ldHdvcmtzOgogICAgLSBsaWJyZW5tcy1uZXQKICBsb2dnaW5nOgogICAgZHJpdmVyOiBqc29uLWZpbGUKICAgIG9wdGlvbnM6CiAgICAgIG1heC1zaXplOiAxMG0KICAgICAgbWF4LWZpbGU6ICIzIgoKc2VydmljZXM6CiAgbGlicmVubXM6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcwogICAgZW52aXJvbm1lbnQ6CiAgICAgIDw8OiAqbGlicmVubXMtZW52aXJvbm1lbnQKICAgICAgTElCUkVOTVNfQkFTRV9VUkw6ICR7TElCUkVOTVNfQkFTRV9VUkw6LS99CiAgICAjIERlZmF1bHQgSFRUUDogc2V0IExJQlJFTk1TX0hUVFBfUFVCTElTSD04MDo4MDAwIGluIC5lbnYuCiAgICAjIFdpdGggVExTOiAxMjcuMC4wLjE6ODAwMDo4MDAwIHNvIG9ubHkgbG9vcGJhY2sgaXMgZXhwb3NlZCAoQ2FkZHkgc2VydmVzIDo4MC86NDQzKS4KICAgICMgTm90ZTogZG8gbm90IHVzZSAke1ZBUjotODA6ODAwMH0g4oCUIENvbXBvc2UgdHJlYXRzIHRoZSBleHRyYSBjb2xvbiBhcyBzeW50YXguCiAgICBwb3J0czoKICAgICAgLSAiJHtMSUJSRU5NU19IVFRQX1BVQkxJU0g6P0xJQlJFTk1TX0hUVFBfUFVCTElTSCBpcyByZXF1aXJlZCAoZS5nLiA4MDo4MDAwKX0iCiAgICBkZXBlbmRzX29uOgogICAgICBkYjoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgICByZWRpczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgaGVhbHRoY2hlY2s6CiAgICAgIHRlc3Q6IFsiQ01EIiwgImN1cmwiLCAiLWZzUyIsICJodHRwOi8vbG9jYWxob3N0OjgwMDAvIl0KICAgICAgaW50ZXJ2YWw6IDE1cwogICAgICB0aW1lb3V0OiA1cwogICAgICByZXRyaWVzOiAxMgogICAgICBzdGFydF9wZXJpb2Q6IDkwcwogICAgZGVwbG95OgogICAgICByZXNvdXJjZXM6CiAgICAgICAgbGltaXRzOgogICAgICAgICAgbWVtb3J5OiAxRwogICAgICAgIHJlc2VydmF0aW9uczoKICAgICAgICAgIG1lbW9yeTogMjU2TQoKICBkaXNwYXRjaGVyOgogICAgPDw6ICpsaWJyZW5tcy1zZXJ2aWNlCiAgICBob3N0bmFtZTogbGlicmVubXMtZGlzcGF0Y2hlcgogICAgZW52aXJvbm1lbnQ6CiAgICAgIDw8OiAqbGlicmVubXMtZW52aXJvbm1lbnQKICAgICAgRElTUEFUQ0hFUl9OT0RFX0lEOiBkaXNwYXRjaGVyMQogICAgICBTSURFQ0FSX0RJU1BBVENIRVI6ICIxIgogICAgZGVwZW5kc19vbjoKICAgICAgbGlicmVubXM6CiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX3N0YXJ0ZWQKICAgICAgcmVkaXM6CiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX3N0YXJ0ZWQKICAgIGRlcGxveToKICAgICAgcmVzb3VyY2VzOgogICAgICAgIGxpbWl0czoKICAgICAgICAgIG1lbW9yeTogMUcKICAgICAgICByZXNlcnZhdGlvbnM6CiAgICAgICAgICBtZW1vcnk6IDI1Nk0KCiAgc3lzbG9nbmc6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcy1zeXNsb2duZwogICAgZW52aXJvbm1lbnQ6CiAgICAgIDw8OiAqbGlicmVubXMtZW52aXJvbm1lbnQKICAgICAgU0lERUNBUl9TWVNMT0dORzogIjEiCiAgICBwb3J0czoKICAgICAgLSAiNTE0OjUxNC90Y3AiCiAgICAgIC0gIjUxNDo1MTQvdWRwIgogICAgZGVwZW5kc19vbjoKICAgICAgbGlicmVubXM6CiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX3N0YXJ0ZWQKICAgICAgcmVkaXM6CiAgICAgICAgY29uZGl0aW9uOiBzZXJ2aWNlX3N0YXJ0ZWQKICAgIGRlcGxveToKICAgICAgcmVzb3VyY2VzOgogICAgICAgIGxpbWl0czoKICAgICAgICAgIG1lbW9yeTogNTEyTQogICAgICAgIHJlc2VydmF0aW9uczoKICAgICAgICAgIG1lbW9yeTogMTI4TQoKICBzbm1wdHJhcGQ6CiAgICA8PDogKmxpYnJlbm1zLXNlcnZpY2UKICAgIGhvc3RuYW1lOiBsaWJyZW5tcy1zbm1wdHJhcGQKICAgIGVudmlyb25tZW50OgogICAgICA8PDogKmxpYnJlbm1zLWVudmlyb25tZW50CiAgICAgIFNJREVDQVJfU05NUFRSQVBEOiAiMSIKICAgICAgU05NUF9VU0VSOiAke1NOTVBfVVNFUjotbGlicmVubXNfdXNlcn0KICAgICAgU05NUF9BVVRIOiAke1NOTVBfQVVUSDo/U05NUF9BVVRIIGlzIHJlcXVpcmVkfQogICAgICBTTk1QX1BSSVY6ICR7U05NUF9QUklWOj9TTk1QX1BSSVYgaXMgcmVxdWlyZWR9CiAgICAgIFNOTVBfRU5HSU5FSUQ6ICR7U05NUF9FTkdJTkVJRDo/U05NUF9FTkdJTkVJRCBpcyByZXF1aXJlZH0KICAgICAgU05NUF9ESVNBQkxFX0FVVEhPUklaQVRJT046ICR7U05NUF9ESVNBQkxFX0FVVEhPUklaQVRJT046LW5vfQogICAgcG9ydHM6CiAgICAgIC0gIjE2MjoxNjIvdGNwIgogICAgICAtICIxNjI6MTYyL3VkcCIKICAgIGRlcGVuZHNfb246CiAgICAgIGxpYnJlbm1zOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9zdGFydGVkCiAgICAgIHJlZGlzOgogICAgICAgIGNvbmRpdGlvbjogc2VydmljZV9zdGFydGVkCiAgICBkZXBsb3k6CiAgICAgIHJlc291cmNlczoKICAgICAgICBsaW1pdHM6CiAgICAgICAgICBtZW1vcnk6IDUxMk0KICAgICAgICByZXNlcnZhdGlvbnM6CiAgICAgICAgICBtZW1vcnk6IDEyOE0KCiAgZGI6CiAgICBpbWFnZTogbWFyaWFkYjoxMC4xMQogICAgcmVzdGFydDogdW5sZXNzLXN0b3BwZWQKICAgIGVudmlyb25tZW50OgogICAgICBUWjogJHtUWjotVVRDfQogICAgICBNQVJJQURCX1JPT1RfUEFTU1dPUkQ6ICR7REJfUk9PVF9QQVNTV09SRDo/REJfUk9PVF9QQVNTV09SRCBpcyByZXF1aXJlZH0KICAgICAgTUFSSUFEQl9EQVRBQkFTRTogJHtEQl9OQU1FOi1saWJyZW5tc30KICAgICAgTUFSSUFEQl9VU0VSOiAke0RCX1VTRVI6LWxpYnJlbm1zfQogICAgICBNQVJJQURCX1BBU1NXT1JEOiAke0RCX1BBU1NXT1JEOj9EQl9QQVNTV09SRCBpcyByZXF1aXJlZH0KICAgIHZvbHVtZXM6CiAgICAgIC0gLi9kYXRhL2RiOi92YXIvbGliL215c3FsCiAgICBjb21tYW5kOgogICAgICAtIG15c3FsZAogICAgICAtIC0taW5ub2RiLWZpbGUtcGVyLXRhYmxlPTEKICAgICAgLSAtLWxvd2VyLWNhc2UtdGFibGUtbmFtZXM9MAogICAgICAtIC0tY2hhcmFjdGVyLXNldC1zZXJ2ZXI9dXRmOG1iNAogICAgICAtIC0tY29sbGF0aW9uLXNlcnZlcj11dGY4bWI0X3VuaWNvZGVfY2kKICAgICAgLSAtLW1heC1hbGxvd2VkLXBhY2tldD02NE0KICAgICAgLSAtLWlubm9kYi1idWZmZXItcG9vbC1zaXplPTEyOE0KICAgIGhlYWx0aGNoZWNrOgogICAgICAjIFByZWZlciBtYXJpYWRiLWFkbWluIOKAlCBtYXRjaGVzIHRoZSBpbnN0YWxsZXIgd2FpdCBsb29wIGFuZCBhdm9pZHMKICAgICAgIyBmbGFreSBoZWFsdGhjaGVjay5zaCBmYWxzZS1uZWdhdGl2ZXMgdGhhdCBibG9jayBkZXBlbmRzX29uLgogICAgICB0ZXN0OgogICAgICAgIFsKICAgICAgICAgICJDTUQtU0hFTEwiLAogICAgICAgICAgIk1ZU1FMX1BXRD1cIiQkTUFSSUFEQl9ST09UX1BBU1NXT1JEXCIgbWFyaWFkYi1hZG1pbiBwaW5nIC1obG9jYWxob3N0IC11cm9vdCAtLXNpbGVudCIsCiAgICAgICAgXQogICAgICBpbnRlcnZhbDogNXMKICAgICAgdGltZW91dDogNXMKICAgICAgcmV0cmllczogMzYKICAgICAgc3RhcnRfcGVyaW9kOiA2MHMKICAgIG5ldHdvcmtzOgogICAgICAtIGxpYnJlbm1zLW5ldAogICAgbG9nZ2luZzoKICAgICAgZHJpdmVyOiBqc29uLWZpbGUKICAgICAgb3B0aW9uczoKICAgICAgICBtYXgtc2l6ZTogMTBtCiAgICAgICAgbWF4LWZpbGU6ICIzIgogICAgZGVwbG95OgogICAgICByZXNvdXJjZXM6CiAgICAgICAgbGltaXRzOgogICAgICAgICAgbWVtb3J5OiAxRwogICAgICAgIHJlc2VydmF0aW9uczoKICAgICAgICAgIG1lbW9yeTogMjU2TQoKICByZWRpczoKICAgIGltYWdlOiByZWRpczo3LjItYWxwaW5lCiAgICByZXN0YXJ0OiB1bmxlc3Mtc3RvcHBlZAogICAgZW52aXJvbm1lbnQ6CiAgICAgIFJFRElTX1BBU1NXT1JEOiAke1JFRElTX1BBU1NXT1JEOj9SRURJU19QQVNTV09SRCBpcyByZXF1aXJlZH0KICAgIGNvbW1hbmQ6CiAgICAgIC0gL2Jpbi9zaAogICAgICAtIC1lYwogICAgICAtIHwKICAgICAgICB1bWFzayAwNzcKICAgICAgICB7CiAgICAgICAgICBwcmludGYgJ3JlcXVpcmVwYXNzICVzXG4nICIkJFJFRElTX1BBU1NXT1JEIgogICAgICAgICAgcHJpbnRmICdtYXhtZW1vcnkgNTEybWJcbicKICAgICAgICAgIHByaW50ZiAnbWF4bWVtb3J5LXBvbGljeSBub2V2aWN0aW9uXG4nCiAgICAgICAgICBwcmludGYgJ2FwcGVuZG9ubHkgeWVzXG4nCiAgICAgICAgfSA+L3RtcC9yZWRpcy5jb25mCiAgICAgICAgZXhlYyByZWRpcy1zZXJ2ZXIgL3RtcC9yZWRpcy5jb25mCiAgICB2b2x1bWVzOgogICAgICAtIC4vZGF0YS9yZWRpczovZGF0YQogICAgaGVhbHRoY2hlY2s6CiAgICAgIHRlc3Q6IFsiQ01ELVNIRUxMIiwgIlJFRElTQ0xJX0FVVEg9XCIkJFJFRElTX1BBU1NXT1JEXCIgcmVkaXMtY2xpIHBpbmcgfCBncmVwIC1xIFBPTkciXQogICAgICBpbnRlcnZhbDogMTBzCiAgICAgIHRpbWVvdXQ6IDVzCiAgICAgIHJldHJpZXM6IDEyCiAgICAgIHN0YXJ0X3BlcmlvZDogMTBzCiAgICBuZXR3b3JrczoKICAgICAgLSBsaWJyZW5tcy1uZXQKICAgIGxvZ2dpbmc6CiAgICAgIGRyaXZlcjoganNvbi1maWxlCiAgICAgIG9wdGlvbnM6CiAgICAgICAgbWF4LXNpemU6IDEwbQogICAgICAgIG1heC1maWxlOiAiMyIKICAgIGRlcGxveToKICAgICAgcmVzb3VyY2VzOgogICAgICAgIGxpbWl0czoKICAgICAgICAgIG1lbW9yeTogNjQwTQogICAgICAgIHJlc2VydmF0aW9uczoKICAgICAgICAgIG1lbW9yeTogMTI4TQoKICAjIE9wdGlvbmFsIFRMUyB0ZXJtaW5hdG9yIChkb2NrZXIgY29tcG9zZSAtLXByb2ZpbGUgdGxzIHVwIC1kKS4KICAjIEVuYWJsZWQgYXV0b21hdGljYWxseSB3aGVuIHRoZSBpbnN0YWxsZXIgY29uZmlndXJlcyBIVFRQUyArIC0tbGUtZW1haWwKICAjIG9yIC0tc2VsZi1zaWduZWQtdGxzLgogIGNhZGR5OgogICAgaW1hZ2U6IGNhZGR5OjIuOS1hbHBpbmUKICAgIHByb2ZpbGVzOiBbInRscyJdCiAgICByZXN0YXJ0OiB1bmxlc3Mtc3RvcHBlZAogICAgcG9ydHM6CiAgICAgIC0gIjgwOjgwIgogICAgICAtICI0NDM6NDQzIgogICAgICAtICI0NDM6NDQzL3VkcCIKICAgIGVudmlyb25tZW50OgogICAgICAjIEludGVycG9sYXRlZCBldmVuIHdoZW4gdGhlIHRscyBwcm9maWxlIGlzIGluYWN0aXZlIOKAlCBrZWVwIHNvZnQgZGVmYXVsdHMuCiAgICAgIENBRERZX0VNQUlMOiAke0NBRERZX0VNQUlMOi19CiAgICAgIENBRERZX1NJVEVfQUREUkVTUzogJHtDQUREWV9TSVRFX0FERFJFU1M6LX0KICAgIHZvbHVtZXM6CiAgICAgIC0gLi9kYXRhL2NhZGR5L0NhZGR5ZmlsZTovZXRjL2NhZGR5L0NhZGR5ZmlsZTpybwogICAgICAtIC4vZGF0YS9jYWRkeS9kYXRhOi9kYXRhCiAgICAgIC0gLi9kYXRhL2NhZGR5L2NvbmZpZzovY29uZmlnCiAgICBkZXBlbmRzX29uOgogICAgICBsaWJyZW5tczoKICAgICAgICBjb25kaXRpb246IHNlcnZpY2Vfc3RhcnRlZAogICAgbmV0d29ya3M6CiAgICAgIC0gbGlicmVubXMtbmV0CiAgICBsb2dnaW5nOgogICAgICBkcml2ZXI6IGpzb24tZmlsZQogICAgICBvcHRpb25zOgogICAgICAgIG1heC1zaXplOiAxMG0KICAgICAgICBtYXgtZmlsZTogIjMiCiAgICBkZXBsb3k6CiAgICAgIHJlc291cmNlczoKICAgICAgICBsaW1pdHM6CiAgICAgICAgICBtZW1vcnk6IDI1Nk0KICAgICAgICByZXNlcnZhdGlvbnM6CiAgICAgICAgICBtZW1vcnk6IDY0TQoKICAjIE9wdGlvbmFsIFNNVFAgcmVsYXkgKGRvY2tlciBjb21wb3NlIC0tcHJvZmlsZSBtYWlsIHVwIC1kKS4KICAjIExpYnJlTk1TIHN1Ym1pdHMgdG8gbXNtdHBkOjI1OyBtc210cGQgdGFsa3MgdG8gdGhlIHVwc3RyZWFtIFNNVFAgc2VydmVyLgogIG1zbXRwZDoKICAgIGltYWdlOiBjcmF6eW1heC9tc210cGQ6MS44LjM0CiAgICBwcm9maWxlczogWyJtYWlsIl0KICAgIHJlc3RhcnQ6IHVubGVzcy1zdG9wcGVkCiAgICBlbnZpcm9ubWVudDoKICAgICAgU01UUF9IT1NUOiAke1NNVFBfSE9TVDotfQogICAgICBTTVRQX1BPUlQ6ICR7U01UUF9QT1JUOi01ODd9CiAgICAgIFNNVFBfVExTOiAke1NNVFBfVExTOi1vbn0KICAgICAgU01UUF9TVEFSVFRMUzogJHtTTVRQX1NUQVJUVExTOi1vbn0KICAgICAgU01UUF9UTFNfQ0hFQ0tDRVJUOiAke1NNVFBfVExTX0NIRUNLQ0VSVDotb259CiAgICAgIFNNVFBfQVVUSDogJHtTTVRQX0FVVEg6LW9ufQogICAgICBTTVRQX1VTRVI6ICR7U01UUF9VU0VSOi19CiAgICAgIFNNVFBfUEFTU1dPUkQ6ICR7U01UUF9QQVNTV09SRDotfQogICAgICBTTVRQX0ZST006ICR7U01UUF9GUk9NOi19CiAgICBuZXR3b3JrczoKICAgICAgLSBsaWJyZW5tcy1uZXQKICAgIGxvZ2dpbmc6CiAgICAgIGRyaXZlcjoganNvbi1maWxlCiAgICAgIG9wdGlvbnM6CiAgICAgICAgbWF4LXNpemU6IDEwbQogICAgICAgIG1heC1maWxlOiAiMyIKICAgIGRlcGxveToKICAgICAgcmVzb3VyY2VzOgogICAgICAgIGxpbWl0czoKICAgICAgICAgIG1lbW9yeTogMTI4TQogICAgICAgIHJlc2VydmF0aW9uczoKICAgICAgICAgIG1lbW9yeTogMzJNCgpuZXR3b3JrczoKICBsaWJyZW5tcy1uZXQ6CiAgICBkcml2ZXI6IGJyaWRnZQo="
 
 extract_docker_compose() {
   # Prefer a compose file next to this script (git clone / local edits), then
@@ -235,8 +249,23 @@ PY
 write_caddyfile() {
   local dest="$1" temp="${1}.tmp.$$"
   mkdir -p "$(dirname "$dest")"
-  if ! (
-    umask 022 && cat >"$temp" <<'EOF'
+  if [[ "$TLS_MODE" == "self-signed" ]]; then
+    if ! (
+      umask 022 && cat >"$temp" <<EOF
+# Generated by librenms-auto-install.sh — self-signed TLS (labs / CI)
+${CADDY_SITE_ADDRESS} {
+	tls internal
+	encode gzip
+	reverse_proxy librenms:8000
+}
+EOF
+    ); then
+      rm -f -- "$temp"
+      die "Could not write Caddyfile: $dest"
+    fi
+  else
+    if ! (
+      umask 022 && cat >"$temp" <<'EOF'
 # Generated by librenms-auto-install.sh — TLS termination for LibreNMS
 {
 	email {$CADDY_EMAIL}
@@ -247,12 +276,37 @@ write_caddyfile() {
 	reverse_proxy librenms:8000
 }
 EOF
-  ); then
-    rm -f -- "$temp"
-    die "Could not write Caddyfile: $dest"
+    ); then
+      rm -f -- "$temp"
+      die "Could not write Caddyfile: $dest"
+    fi
   fi
   mv -f -- "$temp" "$dest"
   chmod 644 "$dest"
+}
+
+write_email_yaml() {
+  local dest="$1" temp="${1}.tmp.$$" from="${SMTP_FROM}"
+  mkdir -p "$(dirname "$dest")"
+  [[ -n "$from" ]] || from="$ADMIN_EMAIL"
+  if ! (
+    umask 027 && cat >"$temp" <<EOF
+# Generated by librenms-auto-install.sh — submit mail via msmtpd sidecar
+email_backend: smtp
+email_html: true
+email_smtp_host: msmtpd
+email_smtp_port: 25
+email_smtp_timeout: 30
+email_smtp_secure: ''
+email_smtp_auth: false
+email_from: ${from}
+EOF
+  ); then
+    rm -f -- "$temp"
+    die "Could not write email config: $dest"
+  fi
+  mv -f -- "$temp" "$dest"
+  chmod 640 "$dest"
 }
 
 backup_file() {
@@ -277,7 +331,9 @@ load_env() {
       REDIS_HOST | REDIS_PASSWORD | POLLERS | CACHE_DRIVER | SESSION_DRIVER | \
       LIBRENMS_SNMP_COMMUNITY | SNMP_USER | SNMP_AUTH | SNMP_PRIV | SNMP_ENGINEID | \
       ADMIN_PASS | ADMIN_EMAIL | ENABLE_TLS | CADDY_EMAIL | CADDY_SITE_ADDRESS | \
-      LIBRENMS_HTTP_PUBLISH | COMPOSE_PROFILES | LE_EMAIL)
+      LIBRENMS_HTTP_PUBLISH | COMPOSE_PROFILES | LE_EMAIL | TLS_MODE | ENABLE_MAIL | \
+      SMTP_HOST | SMTP_PORT | SMTP_USER | SMTP_PASSWORD | SMTP_FROM | SMTP_TLS | \
+      SMTP_STARTTLS | SMTP_TLS_CHECKCERT | SMTP_AUTH)
       val="${val%$'\r'}"
       # Only import when the variable is not already set by CLI/env
       if [[ -z "${!key:-}" ]]; then
@@ -310,7 +366,7 @@ LibreNMS Docker Compose Installer - Network monitoring with auto-discovery,
 SNMP, topology maps, traffic analysis, and alerting.
 
 NOTE: Single-node Compose for labs and small sites. Optional HTTPS via Caddy
-+ Let's Encrypt. See README "Know before you install" and "Production posture".
+(+ Let's Encrypt or self-signed) and optional SMTP via msmtpd. See README.
 
 Options:
   -h, --help                 Show this help
@@ -325,18 +381,27 @@ Options:
   --no-firewall              Skip UFW firewall configuration
   --no-ssl                   Force HTTP-only (disable Caddy / Let's Encrypt)
   --le-email EMAIL           Enable TLS via Caddy + Let's Encrypt (requires public DNS hostname)
+  --self-signed-tls          Enable TLS with Caddy internal/self-signed certs (labs/CI)
+  --smtp-host HOST           Enable mail profile; upstream SMTP host for msmtpd
+  --smtp-port PORT           Upstream SMTP port (default: 587)
+  --smtp-user USER           Upstream SMTP username
+  --smtp-password PASS       Upstream SMTP password
+  --smtp-from EMAIL          Envelope/from address for outbound mail
   --emit-env FILE            Write generated .env to FILE and exit (no Docker/root)
   --db-name NAME             Database name (letters, numbers, underscore)
   --db-user USER             Database user (letters, numbers, underscore)
 
-HTTPS: pass an https:// --url and --le-email, or --le-email alone (URL is
-normalized to https). ACME needs a public DNS name (not a raw IP / localhost).
+HTTPS: pass an https:// --url and --le-email, or --self-signed-tls for labs/CI.
+Mail: pass --smtp-host (and usually --smtp-user/--smtp-password/--smtp-from).
 
 Examples:
   sudo ./librenms-auto-install.sh                           # Interactive
   sudo ./librenms-auto-install.sh -u http://librenms.local -s creds.txt
   sudo ./librenms-auto-install.sh -n -u https://nms.example.com --le-email ops@example.com
-  sudo ./librenms-auto-install.sh -n -u http://192.168.1.50 --no-ssl -s creds.txt
+  sudo ./librenms-auto-install.sh -n -u https://localhost --self-signed-tls
+  sudo ./librenms-auto-install.sh -n -u http://192.168.1.50 --no-ssl -s creds.txt \
+    --smtp-host smtp.example.com --smtp-user alerts --smtp-password 'secret' \
+    --smtp-from alerts@example.com
 EOF
 }
 
@@ -409,6 +474,39 @@ while [[ $# -gt 0 ]]; do
     CADDY_EMAIL="$2"
     LE_EMAIL_SET=true
     validate_email "$LE_EMAIL"
+    shift 2
+    ;;
+  --self-signed-tls)
+    SELF_SIGNED_TLS=true
+    SELF_SIGNED_SET=true
+    TLS_MODE="self-signed"
+    shift
+    ;;
+  --smtp-host)
+    [[ -z "${2:-}" || "$2" == -* ]] && die "Option --smtp-host requires a hostname"
+    SMTP_HOST="$2"
+    SMTP_HOST_SET=true
+    shift 2
+    ;;
+  --smtp-port)
+    [[ -z "${2:-}" || "$2" == -* ]] && die "Option --smtp-port requires a port"
+    SMTP_PORT="$2"
+    shift 2
+    ;;
+  --smtp-user)
+    [[ -z "${2:-}" || "$2" == -* ]] && die "Option --smtp-user requires a username"
+    SMTP_USER="$2"
+    shift 2
+    ;;
+  --smtp-password)
+    [[ -z "${2:-}" || "$2" == -* ]] && die "Option --smtp-password requires a password"
+    SMTP_PASSWORD="$2"
+    shift 2
+    ;;
+  --smtp-from)
+    [[ -z "${2:-}" || "$2" == -* ]] && die "Option --smtp-from requires an email address"
+    SMTP_FROM="$2"
+    validate_email "$SMTP_FROM"
     shift 2
     ;;
   --db-name)
@@ -517,42 +615,85 @@ fi
 #-------------------------- TLS decision --------------------------------
 # Prefer CADDY_EMAIL from --le-email / existing .env; LE_EMAIL is an alias.
 CADDY_EMAIL="${CADDY_EMAIL:-${LE_EMAIL:-}}"
+if [[ "$SELF_SIGNED_SET" == true || "$SELF_SIGNED_TLS" == true || "${TLS_MODE:-}" == "self-signed" ]]; then
+  TLS_MODE="self-signed"
+  SELF_SIGNED_TLS=true
+fi
 want_tls=false
-if [[ "$LE_EMAIL_SET" == true || "$(url_scheme "${BASE_URL:-http://localhost}")" == "https" || "${ENABLE_TLS:-false}" == true ]]; then
+if [[ "$LE_EMAIL_SET" == true || "$SELF_SIGNED_TLS" == true || "$(url_scheme "${BASE_URL:-http://localhost}")" == "https" || "${ENABLE_TLS:-false}" == true ]]; then
   want_tls=true
 fi
 if [[ "$SKIP_SSL" == true ]]; then
   ENABLE_TLS=false
+  TLS_MODE="acme"
+  SELF_SIGNED_TLS=false
   if [[ -n "${BASE_URL:-}" && "$(url_scheme "$BASE_URL")" == "https" ]]; then
     warn "--no-ssl forces HTTP; normalizing BASE_URL to http://"
     BASE_URL="$(normalize_url_scheme "$BASE_URL" http)"
   fi
   LIBRENMS_HTTP_PUBLISH="${LIBRENMS_HTTP_PUBLISH:-80:8000}"
-  COMPOSE_PROFILES=""
   CADDY_SITE_ADDRESS=""
 elif [[ "$want_tls" == true ]]; then
   ENABLE_TLS=true
-  [[ -n "$CADDY_EMAIL" ]] || die "TLS requires --le-email (Let's Encrypt registration email)"
-  validate_email "$CADDY_EMAIL"
   [[ -n "$BASE_URL" ]] || die "TLS requires --url"
-  if url_is_ip_or_local "$BASE_URL"; then
-    die "TLS/ACME requires a public DNS hostname (not an IP, localhost, or *.local)"
-  fi
-  if [[ "$(url_scheme "$BASE_URL")" != "https" ]]; then
-    info "Normalizing BASE_URL to https:// for TLS"
-    BASE_URL="$(normalize_url_scheme "$BASE_URL" https)"
+  if [[ "$TLS_MODE" == "self-signed" ]]; then
+    if [[ "$(url_scheme "$BASE_URL")" != "https" ]]; then
+      info "Normalizing BASE_URL to https:// for self-signed TLS"
+      BASE_URL="$(normalize_url_scheme "$BASE_URL" https)"
+    fi
+  else
+    [[ -n "$CADDY_EMAIL" ]] || die "TLS requires --le-email (Let's Encrypt registration email) or --self-signed-tls"
+    validate_email "$CADDY_EMAIL"
+    if url_is_ip_or_local "$BASE_URL"; then
+      die "TLS/ACME requires a public DNS hostname (not an IP, localhost, or *.local); use --self-signed-tls for labs/CI"
+    fi
+    if [[ "$(url_scheme "$BASE_URL")" != "https" ]]; then
+      info "Normalizing BASE_URL to https:// for TLS"
+      BASE_URL="$(normalize_url_scheme "$BASE_URL" https)"
+    fi
   fi
   CADDY_SITE_ADDRESS="$(url_hostname "$BASE_URL")"
   [[ -n "$CADDY_SITE_ADDRESS" ]] || die "Could not parse hostname from BASE_URL"
   LIBRENMS_HTTP_PUBLISH="127.0.0.1:8000:8000"
-  COMPOSE_PROFILES="tls"
 else
   ENABLE_TLS=false
   LIBRENMS_HTTP_PUBLISH="${LIBRENMS_HTTP_PUBLISH:-80:8000}"
-  COMPOSE_PROFILES=""
   CADDY_SITE_ADDRESS=""
 fi
-export ENABLE_TLS CADDY_EMAIL CADDY_SITE_ADDRESS LIBRENMS_HTTP_PUBLISH COMPOSE_PROFILES
+
+#-------------------------- Mail decision -------------------------------
+SMTP_PORT="${SMTP_PORT:-587}"
+SMTP_TLS="${SMTP_TLS:-on}"
+SMTP_STARTTLS="${SMTP_STARTTLS:-on}"
+SMTP_TLS_CHECKCERT="${SMTP_TLS_CHECKCERT:-on}"
+SMTP_AUTH="${SMTP_AUTH:-on}"
+if [[ "$SMTP_HOST_SET" == true || -n "$SMTP_HOST" || "${ENABLE_MAIL:-false}" == true ]]; then
+  ENABLE_MAIL=true
+  [[ -n "$SMTP_HOST" ]] || die "Mail requires --smtp-host"
+  if ! [[ "$SMTP_PORT" =~ ^[0-9]+$ ]] || ((SMTP_PORT < 1 || SMTP_PORT > 65535)); then
+    die "SMTP port must be 1-65535"
+  fi
+  SMTP_FROM="${SMTP_FROM:-$ADMIN_EMAIL}"
+  validate_email "$SMTP_FROM"
+  if [[ "$SMTP_AUTH" == "on" && -z "$SMTP_USER" ]]; then
+    warn "SMTP_AUTH=on but --smtp-user is empty; set credentials before relying on alerts"
+  fi
+else
+  ENABLE_MAIL=false
+fi
+
+# Compose profiles (comma-separated). Empty disables optional sidecars.
+profiles=()
+[[ "$ENABLE_TLS" == true ]] && profiles+=(tls)
+[[ "$ENABLE_MAIL" == true ]] && profiles+=(mail)
+COMPOSE_PROFILES="$(
+  IFS=,
+  echo "${profiles[*]}"
+)"
+export ENABLE_TLS TLS_MODE SELF_SIGNED_TLS CADDY_EMAIL CADDY_SITE_ADDRESS \
+  LIBRENMS_HTTP_PUBLISH COMPOSE_PROFILES ENABLE_MAIL \
+  SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM SMTP_TLS \
+  SMTP_STARTTLS SMTP_TLS_CHECKCERT SMTP_AUTH
 
 #-------------------------- Password generation -------------------------
 DB_PASSWORD="${DB_PASSWORD:-$(gen_pass 32)}"
@@ -606,10 +747,21 @@ SNMP_DISABLE_AUTHORIZATION=no
 ADMIN_PASS=${ADMIN_PASS}
 ADMIN_EMAIL=${ADMIN_EMAIL}
 ENABLE_TLS=${ENABLE_TLS}
+TLS_MODE=${TLS_MODE}
 CADDY_EMAIL=${CADDY_EMAIL}
 CADDY_SITE_ADDRESS=${CADDY_SITE_ADDRESS}
 LIBRENMS_HTTP_PUBLISH=${LIBRENMS_HTTP_PUBLISH}
 COMPOSE_PROFILES=${COMPOSE_PROFILES}
+ENABLE_MAIL=${ENABLE_MAIL}
+SMTP_HOST=${SMTP_HOST}
+SMTP_PORT=${SMTP_PORT}
+SMTP_USER=${SMTP_USER}
+SMTP_PASSWORD=${SMTP_PASSWORD}
+SMTP_FROM=${SMTP_FROM}
+SMTP_TLS=${SMTP_TLS}
+SMTP_STARTTLS=${SMTP_STARTTLS}
+SMTP_TLS_CHECKCERT=${SMTP_TLS_CHECKCERT}
+SMTP_AUTH=${SMTP_AUTH}
 EOF
   ); then
     rm -f -- "$temp"
@@ -634,12 +786,21 @@ if [[ "$DRY_RUN" == true ]]; then
   info "Timezone: $TZ | Pollers: $POLLERS"
   info "Firewall: $([ "$SKIP_FIREWALL" == true ] && echo skipped || echo configured)"
   if [[ "$ENABLE_TLS" == true ]]; then
-    info "TLS: enabled (Caddy + Let's Encrypt)"
-    info "Caddy email: $CADDY_EMAIL"
+    if [[ "$TLS_MODE" == "self-signed" ]]; then
+      info "TLS: enabled (Caddy self-signed / internal certs)"
+    else
+      info "TLS: enabled (Caddy + Let's Encrypt)"
+      info "Caddy email: $CADDY_EMAIL"
+    fi
     info "Caddy site: $CADDY_SITE_ADDRESS"
     info "LibreNMS publish: $LIBRENMS_HTTP_PUBLISH (loopback; Caddy serves :80/:443)"
   else
     info "TLS: disabled (HTTP on port 80)"
+  fi
+  if [[ "$ENABLE_MAIL" == true ]]; then
+    info "Mail: enabled (msmtpd → ${SMTP_HOST}:${SMTP_PORT}, from ${SMTP_FROM})"
+  else
+    info "Mail: disabled (configure --smtp-host for alert email relay)"
   fi
   info "Creds file: ${SAVE_CREDS:-<not saved>}"
   info "Would create: $INSTALL_DIR/data/{librenms/config,db,redis,caddy}"
@@ -688,7 +849,9 @@ if [[ -f .env ]]; then
     [[ "$TZ_SET" == true && "$TZ" != "$(read_env_value .env TZ || true)" ]] ||
     [[ "$POLLERS_SET" == true && "$POLLERS" != "$(read_env_value .env POLLERS || true)" ]] ||
     [[ "$LE_EMAIL_SET" == true && "$CADDY_EMAIL" != "$(read_env_value .env CADDY_EMAIL || true)" ]] ||
+    [[ "$SMTP_HOST_SET" == true && "$SMTP_HOST" != "$(read_env_value .env SMTP_HOST || true)" ]] ||
     [[ "$ENABLE_TLS" != "$(read_env_value .env ENABLE_TLS || echo false)" ]] ||
+    [[ "$ENABLE_MAIL" != "$(read_env_value .env ENABLE_MAIL || echo false)" ]] ||
     [[ "$(read_env_value .env SNMP_DISABLE_AUTHORIZATION || true)" == "yes" ]]; then
     CONFIG_CHANGED=true
   fi
@@ -704,8 +867,10 @@ elif [[ -f .env && "$FORCE" == false ]]; then
   # from a pre-hardening install)
   for key in CACHE_DRIVER SESSION_DRIVER ADMIN_EMAIL REDIS_PASSWORD \
     LIBRENMS_SNMP_COMMUNITY SNMP_USER SNMP_AUTH SNMP_PRIV SNMP_ENGINEID \
-    LIBRENMS_BASE_URL SNMP_DISABLE_AUTHORIZATION ENABLE_TLS CADDY_EMAIL \
-    CADDY_SITE_ADDRESS LIBRENMS_HTTP_PUBLISH COMPOSE_PROFILES; do
+    LIBRENMS_BASE_URL SNMP_DISABLE_AUTHORIZATION ENABLE_TLS TLS_MODE CADDY_EMAIL \
+    CADDY_SITE_ADDRESS LIBRENMS_HTTP_PUBLISH COMPOSE_PROFILES ENABLE_MAIL \
+    SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM SMTP_TLS \
+    SMTP_STARTTLS SMTP_TLS_CHECKCERT SMTP_AUTH; do
     if ! grep -q "^${key}=" .env 2>/dev/null; then
       case "$key" in
       LIBRENMS_BASE_URL) echo 'LIBRENMS_BASE_URL=/' >>.env ;;
@@ -724,7 +889,13 @@ fi
 
 if [[ "$ENABLE_TLS" == true ]]; then
   write_caddyfile "$INSTALL_DIR/data/caddy/Caddyfile"
-  info "Wrote Caddyfile for $CADDY_SITE_ADDRESS"
+  info "Wrote Caddyfile for $CADDY_SITE_ADDRESS ($TLS_MODE)"
+fi
+
+if [[ "$ENABLE_MAIL" == true ]]; then
+  write_email_yaml "$INSTALL_DIR/data/librenms/config/email.yaml"
+  chown "$PUID:$PGID" "$INSTALL_DIR/data/librenms/config/email.yaml" 2>/dev/null || true
+  info "Wrote LibreNMS email.yaml (relay via msmtpd → ${SMTP_HOST})"
 fi
 
 "${DOCKER_COMPOSE[@]}" config --quiet ||
@@ -789,10 +960,17 @@ fi
 #-------------------------- Services ------------------------------------
 info "Starting Docker Compose services..."
 if [[ "$ENABLE_TLS" == true ]]; then
-  info "TLS enabled: Caddy terminates HTTPS for $CADDY_SITE_ADDRESS"
+  if [[ "$TLS_MODE" == "self-signed" ]]; then
+    info "TLS enabled: Caddy self-signed certs for $CADDY_SITE_ADDRESS"
+  else
+    info "TLS enabled: Caddy + Let's Encrypt for $CADDY_SITE_ADDRESS"
+  fi
   info "LibreNMS web is bound to loopback ($LIBRENMS_HTTP_PUBLISH); Caddy serves :80/:443"
 else
   info "HTTP-only deployment on port 80. For HTTPS, re-run with --url https://… and --le-email"
+fi
+if [[ "$ENABLE_MAIL" == true ]]; then
+  info "Mail enabled: msmtpd relays to ${SMTP_HOST}:${SMTP_PORT}"
 fi
 
 # Start backing services first so Compose does not fail the whole stack while
@@ -923,6 +1101,17 @@ if [[ -n "$SAVE_CREDS" ]]; then
 fi
 
 #-------------------------- Summary -------------------------------------
+tls_line="TLS: disabled (HTTP on port 80)"
+if [[ "$ENABLE_TLS" == true ]]; then
+  if [[ "$TLS_MODE" == "self-signed" ]]; then
+    tls_line="TLS: Caddy self-signed (${CADDY_SITE_ADDRESS})"
+  else
+    tls_line="TLS: Caddy + Let's Encrypt (${CADDY_SITE_ADDRESS})"
+  fi
+fi
+mail_line="Mail: disabled"
+[[ "$ENABLE_MAIL" == true ]] && mail_line="Mail: msmtpd → ${SMTP_HOST}:${SMTP_PORT} (from ${SMTP_FROM})"
+
 if [[ "$ENABLE_TLS" == true ]]; then
   cat <<EOF
 
@@ -932,15 +1121,16 @@ LibreNMS deployment complete!
 Web UI: ${BASE_URL}
 Admin user: admin
 Email: ${ADMIN_EMAIL}
-TLS: Caddy + Let's Encrypt (${CADDY_SITE_ADDRESS})
+${tls_line}
+${mail_line}
 
 Initial credentials: .env (chmod 600; ADMIN_PASS, database, Redis, SNMP)
 Credential file: ${SAVE_CREDS:-<none>}
 Log: ${LOG_FILE}
 
 IMPORTANT NOTES:
-1. HTTPS is terminated by Caddy. Ensure DNS for ${CADDY_SITE_ADDRESS}
-   points at this host and ports 80/443 are reachable for ACME.
+1. HTTPS is terminated by Caddy ($TLS_MODE). For ACME, ensure DNS for
+   ${CADDY_SITE_ADDRESS} points here and ports 80/443 are reachable.
 2. Change the admin password immediately via the web UI.
 3. Run scripts/backup.sh regularly; see README Production posture.
 4. For SNMP auto-discovery, configure community strings on
@@ -956,7 +1146,8 @@ LibreNMS deployment complete!
 Web UI: ${BASE_URL:-http://$(hostname -I | awk '{print $1}')/}
 Admin user: admin
 Email: ${ADMIN_EMAIL}
-TLS: disabled (HTTP on port 80)
+${tls_line}
+${mail_line}
 
 Initial credentials: .env (chmod 600; ADMIN_PASS, database, Redis, SNMP)
 Credential file: ${SAVE_CREDS:-<none>}
@@ -965,7 +1156,7 @@ Log: ${LOG_FILE}
 IMPORTANT NOTES:
 1. This deployment serves plain HTTP. Re-run with
    --url https://your.hostname --le-email you@example.com for Caddy TLS,
-   or place your own reverse proxy in front.
+   --self-signed-tls for labs/CI, or place your own reverse proxy in front.
 2. Change the admin password immediately via the web UI.
 3. Run scripts/backup.sh regularly; see README Production posture.
 4. For SNMP auto-discovery, configure community strings on
