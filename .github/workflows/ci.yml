@@ -133,8 +133,10 @@ jobs:
             fi
           done
 
+          # Avoid curl|grep -q under pipefail: grep exits early → curl EPIPE (exit 23).
           for i in $(seq 1 30); do
-            if curl -fsSL http://localhost/ | grep -qi 'librenms'; then
+            if curl -fsSL http://localhost/ -o /tmp/librenms-home.html \
+              && grep -qi 'librenms' /tmp/librenms-home.html; then
               break
             fi
             sleep 2
@@ -191,9 +193,16 @@ jobs:
           after=$(sudo sha256sum .env | cut -d' ' -f1)
           test "$before" = "$after"
 
-          running_count=$(sudo docker compose ps --services --status running | wc -l | tr -d '[:space:]')
-          test "$running_count" = "6"
-          curl -fsSL http://localhost/ | grep -qi 'librenms'
+          for i in $(seq 1 30); do
+            running_count=$(sudo docker compose ps --services --status running | wc -l | tr -d '[:space:]')
+            if [ "$running_count" = "6" ]; then
+              break
+            fi
+            sleep 2
+            [ "$i" -eq 30 ] && { echo "::error::Expected 6 running services, got $running_count"; exit 1; }
+          done
+          curl -fsSL http://localhost/ -o /tmp/librenms-home.html
+          grep -qi 'librenms' /tmp/librenms-home.html
 
           set -a
           # shellcheck disable=SC1091
@@ -210,9 +219,9 @@ jobs:
             --no-ssl
           sudo grep -qx 'POLLERS=3' .env
           sudo grep -qx "DB_PASSWORD=${original_db_password}" .env
-          compgen -G '.env.bak_*' >/dev/null
-
-          backups_before=$(find . -maxdepth 1 -name '.env.bak_*' | wc -l | tr -d '[:space:]')
+          # Backups are root-owned; count them with sudo.
+          backups_before=$(sudo find . -maxdepth 1 -name '.env.bak_*' | wc -l | tr -d '[:space:]')
+          test "$backups_before" -ge 1
           sudo "$GITHUB_WORKSPACE/librenms-auto-install.sh" \
             --non-interactive \
             --url http://localhost \
@@ -220,10 +229,11 @@ jobs:
             --force \
             --no-firewall \
             --no-ssl
-          backups_after=$(find . -maxdepth 1 -name '.env.bak_*' | wc -l | tr -d '[:space:]')
+          backups_after=$(sudo find . -maxdepth 1 -name '.env.bak_*' | wc -l | tr -d '[:space:]')
           test "$backups_after" -gt "$backups_before"
           sudo grep -qx "DB_PASSWORD=${original_db_password}" .env
-          curl -fsSL http://localhost/ | grep -qi 'librenms'
+          curl -fsSL http://localhost/ -o /tmp/librenms-home.html
+          grep -qi 'librenms' /tmp/librenms-home.html
       - name: Logs on failure
         if: failure()
         run: |
