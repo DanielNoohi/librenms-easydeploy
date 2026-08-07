@@ -42,6 +42,28 @@ jobs:
           source .env.example
           set +a
           docker compose -f docker-compose.yml config --quiet
+      - name: Validate TLS compose profile
+        run: |
+          set -euo pipefail
+          set -a
+          # shellcheck disable=SC1091
+          source .env.example
+          set +a
+          export CADDY_EMAIL=ci@example.com
+          export CADDY_SITE_ADDRESS=librenms.example.com
+          export LIBRENMS_HTTP_PUBLISH=127.0.0.1:8000:8000
+          export COMPOSE_PROFILES=tls
+          mkdir -p data/caddy
+          cat >data/caddy/Caddyfile <<'EOF'
+          {
+            email {$CADDY_EMAIL}
+          }
+          {$CADDY_SITE_ADDRESS} {
+            reverse_proxy librenms:8000
+          }
+          EOF
+          docker compose -f docker-compose.yml --profile tls config --quiet
+          docker compose -f docker-compose.yml --profile tls config --services | grep -qx caddy
       - name: No :latest tags
         run: |
           if grep -q ':latest' docker-compose.yml; then
@@ -59,6 +81,13 @@ jobs:
           for svc in db redis librenms dispatcher syslogng snmptrapd; do
             echo "$SERVICES" | grep -q "^${svc}$" || { echo "::error::Missing: $svc"; exit 1; }
           done
+          # caddy is profile-gated and must NOT appear without --profile tls
+          if echo "$SERVICES" | grep -qx caddy; then
+            echo "::error::caddy should only appear with --profile tls"
+            exit 1
+          fi
+      - name: ShellCheck day-2 scripts
+        run: shellcheck scripts/backup.sh scripts/restore.sh scripts/docker-user-ufw.sh
       - name: Embedded compose matches docker-compose.yml
         run: python3 scripts/sync_embedded_compose.py --check
       - name: Secret hygiene

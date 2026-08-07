@@ -57,10 +57,11 @@ teardown() {
 }
 
 @test "Dry-run exits 0 and shows config" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com
+  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --le-email admin@example.com
   assert_success
   assert_output "DRY-RUN"
   assert_output "test.example.com"
+  assert_output "TLS: enabled"
 }
 
 @test "Interactive dry-run never prompts or writes credentials" {
@@ -72,7 +73,8 @@ teardown() {
 }
 
 @test "Dry-run with save-creds shows file path" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --save-creds /tmp/test-creds.txt
+  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com \
+    --le-email admin@example.com --save-creds /tmp/test-creds.txt
   assert_success
   assert_output "/tmp/test-creds.txt"
 }
@@ -84,31 +86,32 @@ teardown() {
 }
 
 @test "Invalid pollers value fails" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --pollers 0
+  run "$SCRIPT" --dry-run --non-interactive --url http://test.example.com --pollers 0
   assert_failure
   assert_output "Pollers must be 1-64"
 }
 
 @test "Invalid pollers value too high fails" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --pollers 100
+  run "$SCRIPT" --dry-run --non-interactive --url http://test.example.com --pollers 100
   assert_failure
   assert_output "Pollers must be 1-64"
 }
 
 @test "Valid pollers accepted" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --pollers 8
+  run "$SCRIPT" --dry-run --non-interactive --url http://test.example.com --pollers 8
   assert_success
 }
 
 @test "Valid timezone is accepted" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --timezone UTC
+  run "$SCRIPT" --dry-run --non-interactive --url http://test.example.com --timezone UTC
   assert_success
 }
 
-@test "Help shows NOT production-hardened disclaimer" {
+@test "Help shows single-node / optional HTTPS guidance" {
   run "$SCRIPT" --help
   assert_success
-  assert_output "NOT production-hardened"
+  assert_output "Optional HTTPS via Caddy"
+  assert_output "--le-email"
 }
 
 @test "Help describes --force as .env overwrite" {
@@ -119,7 +122,7 @@ teardown() {
 }
 
 @test "Dry-run shows sidecar container plan" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com
+  run "$SCRIPT" --dry-run --non-interactive --url http://test.example.com
   assert_success
   assert_output "Would install docker-compose.yml"
   assert_output "create/update .env"
@@ -127,15 +130,36 @@ teardown() {
 }
 
 @test "Invalid timezone fails early" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --timezone "../Invalid"
+  run "$SCRIPT" --dry-run --non-interactive --url http://test.example.com --timezone "../Invalid"
   assert_failure
   assert_output "Invalid timezone"
 }
 
-@test "le-email is rejected with honest TLS message" {
+@test "le-email enables TLS on dry-run" {
   run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --le-email admin@example.com
+  assert_success
+  assert_output "TLS: enabled"
+  assert_output "Caddy email: admin@example.com"
+  assert_output "Caddy site: test.example.com"
+}
+
+@test "https URL without le-email fails" {
+  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com
   assert_failure
-  assert_output "TLS/Let's Encrypt is not built into this installer"
+  assert_output "TLS requires --le-email"
+}
+
+@test "TLS rejects IP addresses for ACME" {
+  run "$SCRIPT" --dry-run --non-interactive --url https://192.168.1.50 --le-email admin@example.com
+  assert_failure
+  assert_output "public DNS hostname"
+}
+
+@test "no-ssl forces HTTP even with https URL" {
+  run "$SCRIPT" --dry-run --non-interactive --url https://test.example.com --no-ssl
+  assert_success
+  assert_output "TLS: disabled"
+  assert_output "http://test.example.com"
 }
 
 @test "emit-env writes valid KEY=value .env without literal %s" {
@@ -153,7 +177,8 @@ teardown() {
 
   for key in TZ BASE_URL LIBRENMS_BASE_URL DB_NAME DB_USER DB_PASSWORD DB_ROOT_PASSWORD \
     REDIS_PASSWORD ADMIN_PASS ADMIN_EMAIL POLLERS LIBRENMS_SNMP_COMMUNITY SNMP_USER \
-    SNMP_AUTH SNMP_PRIV SNMP_ENGINEID SNMP_DISABLE_AUTHORIZATION; do
+    SNMP_AUTH SNMP_PRIV SNMP_ENGINEID SNMP_DISABLE_AUTHORIZATION ENABLE_TLS \
+    LIBRENMS_HTTP_PUBLISH; do
     grep -q "^${key}=" "$envfile" || {
       echo "missing key: $key" >&2
       cat "$envfile" >&2
@@ -170,10 +195,24 @@ teardown() {
   grep -q '^BASE_URL=http://librenms.test.local$' "$envfile"
   grep -q '^LIBRENMS_BASE_URL=/$' "$envfile"
   grep -q '^SNMP_DISABLE_AUTHORIZATION=no$' "$envfile"
+  grep -q '^ENABLE_TLS=false$' "$envfile"
   if [[ "$(uname -s)" == "Linux" ]]; then
     mode=$(stat -c '%a' "$envfile")
     [[ "$mode" == "600" ]]
   fi
+}
+
+@test "emit-env with TLS writes Caddy settings" {
+  envfile="$TEST_TMP/tls.env"
+  run "$SCRIPT" --non-interactive --url https://nms.example.com \
+    --le-email ops@example.com --emit-env "$envfile"
+  assert_success
+  grep -q '^ENABLE_TLS=true$' "$envfile"
+  grep -q '^CADDY_EMAIL=ops@example.com$' "$envfile"
+  grep -q '^CADDY_SITE_ADDRESS=nms.example.com$' "$envfile"
+  grep -q '^COMPOSE_PROFILES=tls$' "$envfile"
+  grep -q '^LIBRENMS_HTTP_PUBLISH=127.0.0.1:8000:8000$' "$envfile"
+  grep -q '^BASE_URL=https://nms.example.com$' "$envfile"
 }
 
 @test "existing .env values survive a non-interactive rerun" {
@@ -183,7 +222,7 @@ teardown() {
 TZ=Europe/Berlin
 PUID=2000
 PGID=2001
-BASE_URL=https://existing.example.com
+BASE_URL=http://existing.example.com
 DB_NAME=existing_db
 DB_USER=existing_user
 DB_PASSWORD=ExistingDbPass123
@@ -200,6 +239,7 @@ SNMP_PRIV=ExistingPrivPass123
 SNMP_ENGINEID=00112233445566778899
 ADMIN_PASS=ExistingAdminPass123
 ADMIN_EMAIL=existing@example.com
+ENABLE_TLS=false
 EOF
 
   emitted="$TEST_TMP/existing-emitted.env"
@@ -219,32 +259,35 @@ EOF
   cat >"$install_dir/.env" <<'EOF'
 BASE_URL=https://old.example.com
 POLLERS=4
+CADDY_EMAIL=old@example.com
+ENABLE_TLS=true
 EOF
 
   emitted="$TEST_TMP/override-emitted.env"
   run "$SCRIPT" --non-interactive --dir "$install_dir" \
-    --url https://new.example.com --pollers 9 --emit-env "$emitted"
+    --url https://new.example.com --pollers 9 --le-email new@example.com --emit-env "$emitted"
   assert_success
   grep -q '^BASE_URL=https://new.example.com$' "$emitted"
   grep -q '^POLLERS=9$' "$emitted"
+  grep -q '^CADDY_EMAIL=new@example.com$' "$emitted"
 }
 
 @test "URL paths, credentials, and invalid ports are rejected" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://example.com/librenms
+  run "$SCRIPT" --dry-run --non-interactive --url https://example.com/librenms --le-email a@b.co
   assert_failure
   assert_output "Invalid URL"
 
-  run "$SCRIPT" --dry-run --non-interactive --url https://user:pass@example.com
+  run "$SCRIPT" --dry-run --non-interactive --url https://user:pass@example.com --le-email a@b.co
   assert_failure
   assert_output "Invalid URL"
 
-  run "$SCRIPT" --dry-run --non-interactive --url https://example.com:70000
+  run "$SCRIPT" --dry-run --non-interactive --url https://example.com:70000 --le-email a@b.co
   assert_failure
   assert_output "Invalid URL"
 }
 
 @test "database identifiers reject unsafe characters" {
-  run "$SCRIPT" --dry-run --non-interactive --url https://example.com --db-name 'bad-name'
+  run "$SCRIPT" --dry-run --non-interactive --url http://example.com --db-name 'bad-name'
   assert_failure
   assert_output "Database name may contain only"
 }
@@ -284,4 +327,17 @@ EOF
   command -v python3 >/dev/null || skip "python3 required"
   run python3 scripts/sync_embedded_compose.py --check
   assert_success
+}
+
+@test "compose file defines caddy tls profile and memory limits" {
+  grep -q 'profiles: \["tls"\]' docker-compose.yml
+  grep -q 'image: caddy:2.9-alpine' docker-compose.yml
+  grep -q 'LIBRENMS_HTTP_PUBLISH' docker-compose.yml
+  grep -q 'memory: 1G' docker-compose.yml
+}
+
+@test "day-2 scripts exist and are executable" {
+  [[ -x scripts/backup.sh ]]
+  [[ -x scripts/restore.sh ]]
+  [[ -x scripts/docker-user-ufw.sh ]]
 }

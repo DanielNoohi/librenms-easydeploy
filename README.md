@@ -9,12 +9,12 @@
   │  one script  →  secrets  →  compose  →  admin ready     │
   │                                                         │
   │   librenms · dispatcher · mariadb · redis               │
-  │   syslog · snmp traps                                   │
+  │   syslog · snmp traps · optional Caddy TLS              │
   └─────────────────────────────────────────────────────────┘
 ```
 
 **Network monitoring without the wiring tax.**  
-Drop a full LibreNMS stack on a single Linux host — auto-discovery, SNMP, topology, graphs, syslog, traps, and alerting — with credentials generated for you and CI that installs the real thing.
+Drop a full LibreNMS stack on a single Linux host — auto-discovery, SNMP, topology, graphs, syslog, traps, and alerting — with credentials generated for you, optional HTTPS via Caddy + Let's Encrypt, and CI that installs the real thing.
 
 Built for labs, homelabs, and small single-node sites. Complements Zabbix (server/app metrics) and Lansweeper (endpoint inventory) with **network-centric visibility**.
 
@@ -22,13 +22,14 @@ Built for labs, homelabs, and small single-node sites. Complements Zabbix (serve
 
 ## Why this exists
 
-Official LibreNMS Docker is solid. The boring parts are still on you: secrets, Redis auth, sidecars, firewall holes, first-boot admin. EasyDeploy wraps that into one reviewed installer that:
+Official LibreNMS Docker is solid. The boring parts are still on you: secrets, Redis auth, sidecars, firewall holes, first-boot admin, TLS. EasyDeploy wraps that into one reviewed installer that:
 
 - Generates strong credentials and a locked-down `.env`
 - Brings up app, dispatcher, MariaDB, Redis, syslog, and SNMP traps together
+- Optionally terminates HTTPS with Caddy + Let's Encrypt
 - Creates the admin user and applies poller / syslog settings
 - Survives reruns without wiping secrets
-- Ships CI that runs the installer end-to-end — not a smoke-test stub
+- Ships backup/restore helpers and CI that runs the installer end-to-end
 
 ---
 
@@ -50,7 +51,7 @@ cd librenms-easydeploy
 sudo ./librenms-auto-install.sh
 ```
 
-Non-interactive (CI / automation):
+HTTP (labs / LAN):
 
 ```bash
 sudo ./librenms-auto-install.sh \
@@ -59,13 +60,23 @@ sudo ./librenms-auto-install.sh \
   --save-creds ~/librenms-creds.txt
 ```
 
+HTTPS (public DNS + Let's Encrypt):
+
+```bash
+sudo ./librenms-auto-install.sh \
+  --non-interactive \
+  --url https://nms.example.com \
+  --le-email ops@example.com \
+  --save-creds ~/librenms-creds.txt
+```
+
 Dry-run preview:
 
 ```bash
-sudo ./librenms-auto-install.sh --dry-run -n -u http://librenms.example.com
+sudo ./librenms-auto-install.sh --dry-run -n -u https://nms.example.com --le-email ops@example.com
 ```
 
-When it finishes, open the URL you gave (HTTP on port 80) and sign in with the printed credentials.
+When it finishes, open the URL you gave and sign in with the printed credentials.
 
 <details>
 <summary>One-liner (less reviewable)</summary>
@@ -82,14 +93,15 @@ curl -sSL https://raw.githubusercontent.com/DanielNoohi/librenms-easydeploy/main
 
 | Piece | Role |
 |-------|------|
-| **librenms** | Web UI & alerting (host `80` → container `8000`) |
+| **librenms** | Web UI & alerting (host `80` → `8000`, or loopback when TLS is on) |
 | **dispatcher** | Distributed poller sidecar |
 | **db** | MariaDB 10.11 |
 | **redis** | Password-protected cache & queue |
 | **syslogng** | Syslog ingest on TCP/UDP `514` |
 | **snmptrapd** | Authorized SNMP traps on TCP/UDP `162` |
+| **caddy** (profile `tls`) | HTTPS termination + ACME when enabled |
 
-Pinned image tag (`librenms/librenms:26.7.0`) — no `:latest`. Persistent data under `./data/`.
+Pinned image tags — no `:latest`. Memory limits on app/db/redis. Persistent data under `./data/`.
 
 ---
 
@@ -97,12 +109,27 @@ Pinned image tag (`librenms/librenms:26.7.0`) — no `:latest`. Persistent data 
 
 | Topic | Reality |
 |-------|---------|
-| TLS | **HTTP only.** Put nginx, Caddy, or Traefik in front for HTTPS. This installer does not configure Let's Encrypt. |
-| Scope | Single-node Compose for labs / homelabs / small sites — **not** a full production hardening kit. |
+| TLS | **HTTP by default.** HTTPS via Caddy + Let's Encrypt when `--url` is `https://…` and `--le-email` is set. ACME needs a public DNS name (not a raw IP / localhost). |
+| Scope | Single-node Compose for labs / homelabs / small sites — not multi-node HA. |
 | Email | SMTP is not bundled; configure LibreNMS before relying on email alerts. |
 | License | GPL-3.0 (LibreNMS and this repo). |
 
-`--no-ssl` is accepted for compatibility; the stack remains HTTP-only either way. Legacy `--le-email` is rejected on purpose.
+`--no-ssl` forces HTTP even if the URL is `https://`.
+
+---
+
+## Production posture
+
+Checklist for a small single-node production-ish deploy:
+
+1. Use `--url https://your.hostname --le-email you@example.com` (DNS A/AAAA must point here; ports 80/443 reachable).
+2. Enable the host firewall after reviewing rules: `sudo ufw enable`.
+3. Optionally tighten Docker port publishing with [`scripts/docker-user-ufw.sh`](scripts/docker-user-ufw.sh) (`sudo ./scripts/docker-user-ufw.sh apply`).
+4. Schedule [`scripts/backup.sh`](scripts/backup.sh); practice [`scripts/restore.sh`](scripts/restore.sh) on a spare host.
+5. Change the admin password in the UI; keep `.env` mode `600`.
+6. Prefer clone installs so you can review `docker-compose.yml` and pin upgrades deliberately.
+
+Still not covered: multi-node HA, managed SMTP, full CIS host hardening.
 
 ---
 
@@ -120,7 +147,8 @@ Pinned image tag (`librenms/librenms:26.7.0`) — no `:latest`. Persistent data 
 | `-f`, `--force` | Rewrite `.env` after backup; loaded secrets are preserved |
 | `-D`, `--dry-run` | Preview without changing the system |
 | `--no-firewall` | Skip UFW rules |
-| `--no-ssl` | Compatibility flag; stack stays HTTP-only |
+| `--no-ssl` | Force HTTP-only (disable Caddy / Let's Encrypt) |
+| `--le-email EMAIL` | Enable TLS via Caddy + Let's Encrypt |
 | `--emit-env FILE` | Write generated `.env` and exit (no Docker/root; for tests) |
 | `--db-name` / `--db-user` | Database name/user (default: `librenms`) |
 
@@ -130,8 +158,6 @@ Generate an env file without installing:
 ./librenms-auto-install.sh -n -u http://example.com --emit-env /tmp/librenms.env
 ```
 
-Behind an existing reverse proxy, point `--url` at the public HTTP origin (or internal IP) the UI will use.
-
 ---
 
 ## Architecture
@@ -140,13 +166,16 @@ Behind an existing reverse proxy, point `--url` at the public HTTP origin (or in
                     ┌──────────────────────────────────────┐
                     │         Docker network (internal)      │
                     │                                        │
-   :80 ───────────► │  librenms ──► redis (auth)             │
+   :80/:443 ──────► │  caddy (tls profile) ──► librenms      │
+   or :80 ────────► │  librenms ──► redis (auth)              │
                     │      │                                 │
    :514 ──────────► │  syslogng    dispatcher (pollers)      │
                     │      │                                 │
    :162 ──────────► │  snmptrapd ──► db (MariaDB)            │
                     └──────────────────────────────────────┘
 ```
+
+When TLS is enabled, LibreNMS publishes only on loopback (`127.0.0.1:8000`) and Caddy serves `:80`/`:443`. SNMP traps and syslog remain cleartext protocols by nature.
 
 Sidecars follow the [official LibreNMS Docker design](https://github.com/librenms/docker).
 
@@ -157,6 +186,7 @@ Sidecars follow the [official LibreNMS Docker design](https://github.com/librenm
 | `./data/librenms` | Config, logs, plugins, RRD (`/data`) |
 | `./data/db` | MariaDB |
 | `./data/redis` | Redis persistence |
+| `./data/caddy` | Caddyfile + ACME data (TLS installs) |
 
 Local Compose tweaks belong in `docker-compose.override.yml`. After editing `docker-compose.yml` in this repo, refresh the embedded blob used by `curl|bash`:
 
@@ -171,9 +201,11 @@ python3 scripts/sync_embedded_compose.py
 - Random passwords for DB root, DB user, Redis, and admin
 - `.env` written atomically with mode `600`
 - Redis requires a password on the internal network
+- Optional Caddy TLS with Let's Encrypt; LibreNMS web bound to loopback when TLS is on
 - SNMP trap authorization on; generated v2c/v3 credentials in `.env`
-- MariaDB healthcheck via `healthcheck.sh` (no password on process argv)
+- MariaDB healthcheck via `mariadb-admin` (password via env, not process argv)
 - Non-root app containers (`PUID`/`PGID` 1000)
+- Compose memory limits on core services
 - Reruns and `--force` keep existing secrets; config changes are backed up first
 - Health checks on MariaDB, Redis, and LibreNMS
 
@@ -185,7 +217,8 @@ Unless you pass `--no-firewall`, the installer adds UFW allows for:
 
 | Port | Purpose |
 |------|---------|
-| `80/tcp` | Web UI |
+| `80/tcp` | Web UI and/or ACME HTTP-01 |
+| `443/tcp` | HTTPS (TLS installs only) |
 | `162/tcp` + `162/udp` | SNMP traps |
 | `514/tcp` + `514/udp` | Syslog |
 
@@ -195,7 +228,7 @@ It does **not** run `ufw enable` — do that yourself when ready:
 sudo ufw enable
 ```
 
-> Docker publishes ports through iptables and can bypass UFW. Restrict exposure with the `DOCKER-USER` chain when needed — see [Docker and packet filtering](https://docs.docker.com/network/packet-filtering-firewalls/).
+> Docker publishes ports through iptables and can bypass UFW. Use [`scripts/docker-user-ufw.sh`](scripts/docker-user-ufw.sh) or see [Docker and packet filtering](https://docs.docker.com/network/packet-filtering-firewalls/).
 
 ---
 
@@ -206,7 +239,8 @@ sudo ufw enable
 - Python 3 and `flock` (`util-linux`)
 - Root / sudo
 - 4 GB RAM minimum (8 GB recommended above ~500 devices)
-- Free host ports: `80/tcp`, `162/tcp+udp`, `514/tcp+udp`
+- Free host ports: `80/tcp` (and `443/tcp` for TLS), `162/tcp+udp`, `514/tcp+udp`
+- For TLS: public DNS hostname pointing at this host
 
 ---
 
@@ -220,17 +254,27 @@ docker compose pull
 docker compose up -d
 ```
 
-The official image runs migrations on startup.
+The official image runs migrations on startup. With TLS, `COMPOSE_PROFILES=tls` in `.env` keeps Caddy included.
 
 ### Backup
 
 ```bash
 cd /opt/librenms-easydeploy
-set -a; source .env; set +a
-docker compose exec -T -e MYSQL_PWD="$DB_ROOT_PASSWORD" db \
-  mariadb-dump -u root "$DB_NAME" > "backup_$(date +%F).sql"
-tar -czf "librenms_data_$(date +%F).tar.gz" data/
+sudo ./scripts/backup.sh
+# or: sudo INSTALL_DIR=/opt/librenms-easydeploy /path/to/repo/scripts/backup.sh
 ```
+
+Creates timestamped `librenms_db_*.sql.gz` and `librenms_data_*.tar.gz` under `./backups/` (mode `700`).
+
+### Restore
+
+```bash
+cd /opt/librenms-easydeploy
+sudo ./scripts/restore.sh backups/librenms_db_YYYYMMDD_HHMMSS.sql.gz \
+  backups/librenms_data_YYYYMMDD_HHMMSS.tar.gz
+```
+
+Requires typing `restore` to confirm. Stops the stack, replaces `data/`, reloads SQL, then brings services back up.
 
 ### Uninstall
 
@@ -246,9 +290,13 @@ rm -rf /opt/librenms-easydeploy
 
 ```
 librenms-easydeploy/
-├── docker-compose.yml           # Pinned services + healthchecks
-├── librenms-auto-install.sh     # Installer (+ embedded compose for curl|bash)
-├── scripts/sync_embedded_compose.py
+├── docker-compose.yml           # Pinned services, limits, optional Caddy profile
+├── librenms-auto-install.sh      # Installer (+ embedded compose for curl|bash)
+├── scripts/
+│   ├── sync_embedded_compose.py
+│   ├── backup.sh
+│   ├── restore.sh
+│   └── docker-user-ufw.sh
 ├── test/test_args.bats
 ├── .github/workflows/ci.yml
 ├── .env.example
@@ -263,13 +311,13 @@ librenms-easydeploy/
 ```bash
 sudo apt-get install -y bats shellcheck shfmt
 bats test/
-shellcheck librenms-auto-install.sh
+shellcheck librenms-auto-install.sh scripts/*.sh
 shfmt -d -i 2 librenms-auto-install.sh
 docker compose -f docker-compose.yml config --quiet   # needs env from .env.example
 python3 scripts/sync_embedded_compose.py --check
 ```
 
-CI on push and PR runs lint, Bats, Compose validation (with `.env.example`), secret scanning, and a full installer E2E (permissions, services, HTTP, admin, `validate.php`, idempotent rerun, and safe `--force`).
+CI on push and PR runs lint, Bats, Compose validation (default + `--profile tls`), secret scanning, and a full installer E2E (permissions, services, HTTP, admin, `validate.php`, idempotent rerun, and safe `--force`).
 
 ---
 
@@ -281,3 +329,4 @@ CI on push and PR runs lint, Bats, Compose validation (with `.env.example`), sec
 
 - [LibreNMS](https://www.librenms.org/)
 - [LibreNMS Docker](https://github.com/librenms/docker)
+- [Caddy](https://caddyserver.com/)
